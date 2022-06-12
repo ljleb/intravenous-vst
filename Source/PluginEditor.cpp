@@ -11,50 +11,57 @@
 
 IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudioProcessor& p):
     AudioProcessorEditor(&p),
-    _audio_processor(p),
-    _input_gain_slider(IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER),
-    _input_gain_attachement(p.getValueTreeState(), IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER, _input_gain_slider),
-    _output_gain_slider(IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER),
-    _output_gain_attachement(p.getValueTreeState(), IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER, _output_gain_slider),
-    _warp_threshold_slider(IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER),
-    _warp_threshold_attachement(p.getValueTreeState(), IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER, _warp_threshold_slider),
-    _warp_scale_slider(IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER),
-    _warp_scale_attachement(p.getValueTreeState(), IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER, _warp_scale_slider),
-    _warp_offset_slider(IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER),
-    _warp_offset_attachement(p.getValueTreeState(), IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER, _warp_offset_slider)
+    _audio_processor(p)
 {
-    initialize_slider(_input_gain_slider, _input_gain_label, 0, p.getValueTreeState());
-    initialize_slider(_output_gain_slider, _ouput_gain_label, 1, p.getValueTreeState());
-    initialize_slider(_warp_threshold_slider, _warp_threshold_label, 2, p.getValueTreeState());
-    initialize_slider(_warp_scale_slider, _warp_scale_label, 3, p.getValueTreeState());
-    initialize_slider(_warp_offset_slider, _warp_offset_label, 4, p.getValueTreeState());
+    for (auto const& parameter_identifier : {
+        IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER,
+        IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER,
+        IntravenousAudioProcessor::WARP_GAIN_IDENTIFIER,
+        IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER,
+        IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER,
+        IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER,
+    }) {
+        _slider_packs.emplace_back(
+            std::make_unique<SliderPack>(
+                *this,
+                p.getValueTreeState(),
+                parameter_identifier,
+                static_cast<unsigned int>(_slider_packs.size())));
+    }
 
     // Make sure that before the constructor has finished, you've set the
     // editor's size to whatever you need it to be.
     setResizable(false, false);
-    setSize(500, 140);
+    setSize(static_cast<unsigned int>(_slider_packs.size() * 100), 140);
 }
 
 IntravenousAudioProcessorEditor::~IntravenousAudioProcessorEditor()
 {
 }
 
-void IntravenousAudioProcessorEditor::initialize_slider(juce::Slider& slider, juce::Label& label, uint32_t slider_position, juce::AudioProcessorValueTreeState& value_tree_state)
+IntravenousAudioProcessorEditor::SliderPack::SliderPack(
+    IntravenousAudioProcessorEditor& editor,
+    juce::AudioProcessorValueTreeState& value_tree_state,
+    juce::StringRef const parameter_identifier,
+    unsigned int slider_position
+):
+    _slider(parameter_identifier),
+    _attachement(value_tree_state, parameter_identifier, _slider)
 {
-    slider.setBounds(100 * slider_position, 25, 105, 105);
-    slider.setTextBoxStyle(juce::Slider::TextEntryBoxPosition::TextBoxBelow, false, 64, 20);
-    slider.setSliderStyle(juce::Slider::SliderStyle::RotaryHorizontalVerticalDrag);
+    _slider.setBounds(100 * slider_position, 25, 105, 105);
+    _slider.setTextBoxStyle(juce::Slider::TextEntryBoxPosition::TextBoxBelow, false, 64, 20);
+    _slider.setSliderStyle(juce::Slider::SliderStyle::RotaryHorizontalVerticalDrag);
 
-    auto const& parameter = value_tree_state.getParameter(slider.getName());
+    auto const& parameter = value_tree_state.getParameter(_slider.getName());
     auto const& range = parameter->getNormalisableRange().getRange();
-    slider.setRange(range.getStart(), range.getEnd());
-    addAndMakeVisible(slider);
+    _slider.setRange(range.getStart(), range.getEnd());
+    editor.addAndMakeVisible(_slider);
 
-    addAndMakeVisible(label);
-    label.setText(parameter->getName(20), juce::NotificationType::dontSendNotification);
-    label.attachToComponent(&slider, false);
-    label.setFont(juce::Font(16.f));
-    label.setJustificationType(juce::Justification::centred);
+    _label.attachToComponent(&_slider, false);
+    _label.setJustificationType(juce::Justification::centred);
+    _label.setFont(juce::Font(16.f));
+    _label.setText(parameter->getName(20), juce::NotificationType::dontSendNotification);
+    editor.addAndMakeVisible(_label);
 }
 
 void IntravenousAudioProcessorEditor::paint(juce::Graphics& g)

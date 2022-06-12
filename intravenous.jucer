@@ -3,7 +3,8 @@
 <JUCERPROJECT id="JDj91J" projectType="audioplug" useAppConfig="0" addUsingNamespaceToJuceHeader="0"
               jucerFormatVersion="1" version="0.0.1" pluginDesc="Integral Processor"
               name="Intravenous" pluginVST3Category="Distortion,Filter,Fx,Stereo"
-              pluginRTASCategory="8192" pluginAAXCategory="8192" pluginVSTCategory="kPlugCategEffect">
+              pluginRTASCategory="8192" pluginAAXCategory="8192" pluginVSTCategory="kPlugCategEffect"
+              cppLanguageStandard="17">
   <MAINGROUP id="Ph4nam" name="Intravenous">
     <GROUP id="{98D8D436-2B5A-BE90-DDF5-6E46F5C9825D}" name="Source">
       <FILE id="o8nyVe" name="PluginProcessor.cpp" compile="1" resource="0"
