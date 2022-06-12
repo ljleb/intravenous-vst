@@ -11,6 +11,7 @@
 
 juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
 juce::String const IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER = "output_gain";
+juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
 juce::String const IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER = "warp_scale";
 juce::String const IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER = "warp_offset";
 
@@ -38,6 +39,11 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 "Output Gain",
                 juce::NormalisableRange<float>(0.f, 1.f),
                 .5f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WARP_THRESHOLD_IDENTIFIER,
+                "Warp Threshold",
+                juce::NormalisableRange<float>(0.f, 1.f),
+                1.f),
             std::make_unique<juce::AudioParameterFloat>(
                 WARP_SCALE_IDENTIFIER,
                 "Warp Scale",
@@ -191,7 +197,7 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             float& output_sample = _output[channel];
 
             recenter_waveform(output_sample, input_sample);
-            output_sample += input_sample * get_parameter(INPUT_GAIN_IDENTIFIER);
+            output_sample = output_sample + input_sample * get_parameter(INPUT_GAIN_IDENTIFIER);
             warp_waveform(output_sample);
             channelData[sample_index] = output_sample * get_parameter(OUTPUT_GAIN_IDENTIFIER);
         }
@@ -200,7 +206,7 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
 void IntravenousAudioProcessor::recenter_waveform(float& output_sample, float const input_sample) const
 {
-    if (input_sample == 0) output_sample *= 0.999f;
+    if (std::abs(input_sample) < 0.001) output_sample *= 0.999f;
 }
 
 void IntravenousAudioProcessor::warp_waveform(float& output_sample) const
@@ -213,9 +219,11 @@ void IntravenousAudioProcessor::warp_waveform(float& output_sample) const
         return mapped_sample + 1.f;
     };
 
-    if (output_sample > 1.f)
+    float const warp_threshold = get_parameter(WARP_THRESHOLD_IDENTIFIER);
+
+    if (output_sample > warp_threshold)
         output_sample = scaled_positive_warp(output_sample);
-    else if (output_sample < -1.f)
+    else if (output_sample < -warp_threshold)
         output_sample = -scaled_positive_warp(-output_sample);
 }
 

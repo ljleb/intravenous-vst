@@ -37,6 +37,10 @@ private:
     juce::Label _ouput_gain_label;
     juce::AudioProcessorValueTreeState::SliderAttachment _output_gain_attachement;
 
+    juce::Slider _warp_threshold_slider;
+    juce::Label _warp_threshold_label;
+    juce::AudioProcessorValueTreeState::SliderAttachment _warp_threshold_attachement;
+
     juce::Slider _warp_scale_slider;
     juce::Label _warp_scale_label;
     juce::AudioProcessorValueTreeState::SliderAttachment _warp_scale_attachement;
