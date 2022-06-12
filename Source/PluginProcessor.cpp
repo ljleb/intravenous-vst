@@ -9,7 +9,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-#include "CallbackParameterListener.h"
+juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
+juce::String const IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER = "output_gain";
 
 //==============================================================================
 IntravenousAudioProcessor::IntravenousAudioProcessor():
@@ -26,12 +27,12 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     _value_tree_state {
         *this, nullptr, "PARAMETERS", {
             std::make_unique<juce::AudioParameterFloat>(
-                "input_gain",
+                INPUT_GAIN_IDENTIFIER,
                 "Input Gain",
                 juce::NormalisableRange<float>(0.f, 10.f),
                 1.f),
             std::make_unique<juce::AudioParameterFloat>(
-                "output_gain",
+                OUTPUT_GAIN_IDENTIFIER,
                 "Output Gain",
                 juce::NormalisableRange<float>(0.f, 1.f),
                 .5f),
@@ -178,14 +179,16 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
             if (sample == 0) _integrated_samples[channel] *= 0.999f;
 
-            _integrated_samples[channel] += sample * _value_tree_state.getRawParameterValue("input_gain")->load();
+            auto const& input_gain = _value_tree_state.getRawParameterValue(INPUT_GAIN_IDENTIFIER)->load();
+            _integrated_samples[channel] += sample * input_gain;
 
             if (_integrated_samples[channel] > 0)
                 _integrated_samples[channel] = std::fmodf(_integrated_samples[channel] + 1.f, 2) - 1.f;
             else
                 _integrated_samples[channel] = 1.f - std::fmodf(-_integrated_samples[channel] + 1.f, 2);
 
-            channelData[sample_index] = _integrated_samples[channel] * _value_tree_state.getRawParameterValue("output_gain")->load();
+            auto const& output_gain = _value_tree_state.getRawParameterValue(OUTPUT_GAIN_IDENTIFIER)->load();
+            channelData[sample_index] = _integrated_samples[channel] * output_gain;
         }
     }
 }
