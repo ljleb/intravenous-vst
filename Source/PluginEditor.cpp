@@ -15,10 +15,13 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     _input_gain_slider(IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER),
     _input_gain_attachement(p.getValueTreeState(), IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER, _input_gain_slider),
     _output_gain_slider(IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER),
-    _output_gain_attachement(p.getValueTreeState(), IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER, _output_gain_slider)
+    _output_gain_attachement(p.getValueTreeState(), IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER, _output_gain_slider),
+    _warp_scale_slider(IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER),
+    _warp_scale_attachement(p.getValueTreeState(), IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER, _warp_scale_slider)
 {
     initialize_slider(_input_gain_slider, _input_gain_label, 0, p.getValueTreeState());
     initialize_slider(_output_gain_slider, _ouput_gain_label, 1, p.getValueTreeState());
+    initialize_slider(_warp_scale_slider, _warp_scale_label, 2, p.getValueTreeState());
 
     // Make sure that before the constructor has finished, you've set the
     // editor's size to whatever you need it to be.

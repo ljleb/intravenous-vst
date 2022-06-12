@@ -11,6 +11,7 @@
 
 juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
 juce::String const IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER = "output_gain";
+juce::String const IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER = "warp_scale";
 
 //==============================================================================
 IntravenousAudioProcessor::IntravenousAudioProcessor():
@@ -36,6 +37,11 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 "Output Gain",
                 juce::NormalisableRange<float>(0.f, 1.f),
                 .5f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WARP_SCALE_IDENTIFIER,
+                "Warp Scale",
+                juce::NormalisableRange<float>(0.f, 1.f),
+                1.f),
         }
     }
 {
@@ -110,7 +116,7 @@ void IntravenousAudioProcessor::changeProgramName (int index, const juce::String
 //==============================================================================
 void IntravenousAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    _output.resize(getTotalNumOutputChannels(), 0.0);
+    _output.resize(getTotalNumInputChannels(), 0.0);
 }
 
 void IntravenousAudioProcessor::releaseResources()
@@ -118,8 +124,8 @@ void IntravenousAudioProcessor::releaseResources()
     // When playback stops, you can use this as an opportunity to free up any
     // spare memory, etc.
 
-    decltype(_output) temp;
-    _output.swap(temp);
+    //decltype(_output) temp;
+    //_output.swap(temp);
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -178,27 +184,32 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             float const input_sample = buffer.getSample(channel, sample_index);
             float& output_sample = _output[channel];
 
-            recenter_waveform(channel, input_sample);
+            recenter_waveform(output_sample, input_sample);
             output_sample += input_sample * get_parameter(INPUT_GAIN_IDENTIFIER);
-            warp_waveform(channel);
+            warp_waveform(output_sample);
             channelData[sample_index] = output_sample * get_parameter(OUTPUT_GAIN_IDENTIFIER);
         }
     }
 }
 
-void IntravenousAudioProcessor::recenter_waveform(int const channel, float const sample)
+void IntravenousAudioProcessor::recenter_waveform(float& output_sample, float const input_sample) const
 {
-    if (sample == 0) _output[channel] *= 0.999f;
+    if (input_sample == 0) output_sample *= 0.999f;
 }
 
-void IntravenousAudioProcessor::warp_waveform(int const channel)
+void IntravenousAudioProcessor::warp_waveform(float& output_sample) const
 {
-    auto& output_sample = _output[channel];
-    auto const factor = 2.;
+    auto const scaled_fmodf = [this](float const x) {
+        float const wrapped_sample = std::fmodf(x + 1.f, 2.f);
+        float const negative_sample = wrapped_sample - 2.f;
+        float const scaled_sample = negative_sample * get_parameter(WARP_SCALE_IDENTIFIER);
+        return scaled_sample + 1.f;
+    };
+
     if (output_sample > 1.f)
-        output_sample = std::fmodf((output_sample - 1.f) / factor + 2.f, 2) - 1.f;
+        output_sample = scaled_fmodf(output_sample);
     else if (output_sample < -1.f)
-        output_sample = 1.f - std::fmodf((-output_sample - 1.f) / factor + 2.f, 2);
+        output_sample = -scaled_fmodf(-output_sample);
 }
 
 //==============================================================================

@@ -24,6 +24,7 @@ class IntravenousAudioProcessor  : public juce::AudioProcessor
 public:
     static juce::String const INPUT_GAIN_IDENTIFIER;
     static juce::String const OUTPUT_GAIN_IDENTIFIER;
+    static juce::String const WARP_SCALE_IDENTIFIER;
 
     //==============================================================================
     IntravenousAudioProcessor();
@@ -38,8 +39,8 @@ public:
    #endif
 
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
-    void recenter_waveform(int const channel, float const sample);
-    void warp_waveform(int const channel);
+    void recenter_waveform(float& output_sample, float const input_sample) const;
+    void warp_waveform(float& output_sample) const;
 
     //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
