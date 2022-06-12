@@ -41,7 +41,7 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 WARP_SCALE_IDENTIFIER,
                 "Warp Scale",
                 juce::NormalisableRange<float>(0.f, 1.f),
-                1.f),
+                0.f),
         }
     }
 {
