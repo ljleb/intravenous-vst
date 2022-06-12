@@ -9,18 +9,34 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include "CallbackParameterListener.h"
+
 //==============================================================================
-IntravenousAudioProcessor::IntravenousAudioProcessor()
+IntravenousAudioProcessor::IntravenousAudioProcessor():
 #ifndef JucePlugin_PreferredChannelConfigurations
-    : AudioProcessor (BusesProperties()
+    AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
                       #if ! JucePlugin_IsSynth
                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
-                       )
+                       ),
 #endif
+    _value_tree_state {
+        *this, nullptr, "PARAMETERS", {
+            std::make_unique<juce::AudioParameterFloat>(
+                "input_gain",
+                "Input Gain",
+                juce::NormalisableRange<float>(0.f, 10.f),
+                1.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                "output_gain",
+                "Output Gain",
+                juce::NormalisableRange<float>(0.f, 1.f),
+                .5f),
+        }
+    }
 {
 }
 
@@ -94,7 +110,6 @@ void IntravenousAudioProcessor::changeProgramName (int index, const juce::String
 void IntravenousAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     _integrated_samples.resize(getTotalNumInputChannels(), 0.0);
-    _input_gain = 3; // temp
 }
 
 void IntravenousAudioProcessor::releaseResources()
@@ -102,8 +117,8 @@ void IntravenousAudioProcessor::releaseResources()
     // When playback stops, you can use this as an opportunity to free up any
     // spare memory, etc.
 
-    decltype(_integrated_samples) scope_samples;
-    _integrated_samples.swap(scope_samples);
+    decltype(_integrated_samples) temporary_samples;
+    _integrated_samples.swap(temporary_samples);
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -163,14 +178,14 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
             if (sample == 0) _integrated_samples[channel] *= 0.999f;
 
-            _integrated_samples[channel] += sample * _input_gain;
+            _integrated_samples[channel] += sample * _value_tree_state.getRawParameterValue("input_gain")->load();
 
             if (_integrated_samples[channel] > 0)
                 _integrated_samples[channel] = std::fmodf(_integrated_samples[channel] + 1.f, 2) - 1.f;
             else
                 _integrated_samples[channel] = 1.f - std::fmodf(-_integrated_samples[channel] + 1.f, 2);
 
-            channelData[sample_index] = _integrated_samples[channel];
+            channelData[sample_index] = _integrated_samples[channel] * _value_tree_state.getRawParameterValue("output_gain")->load();
         }
     }
 }
@@ -192,12 +207,25 @@ void IntravenousAudioProcessor::getStateInformation (juce::MemoryBlock& destData
     // You should use this method to store your parameters in the memory block.
     // You could do that either as raw data, or use the XML or ValueTree classes
     // as intermediaries to make it easy to save and load complex data.
+
+    juce::MemoryOutputStream stream(destData, true);
+
+    stream.writeString(_value_tree_state.state.toXmlString());
 }
 
 void IntravenousAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     // You should use this method to restore your parameters from this memory block,
     // whose contents will have been created by the getStateInformation() call.
+
+    juce::MemoryInputStream stream(data, static_cast<size_t>(sizeInBytes), false);
+
+    _value_tree_state.replaceState(juce::ValueTree::fromXml(stream.readString()));
+}
+
+juce::AudioProcessorValueTreeState& IntravenousAudioProcessor::getValueTreeState()
+{
+    return _value_tree_state;
 }
 
 //==============================================================================

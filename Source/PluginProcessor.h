@@ -15,6 +15,12 @@
 */
 class IntravenousAudioProcessor  : public juce::AudioProcessor
 {
+    std::vector<float> _integrated_samples;
+    juce::AudioProcessorValueTreeState _value_tree_state;
+
+    //==============================================================================
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
+
 public:
     //==============================================================================
     IntravenousAudioProcessor();
@@ -53,10 +59,6 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-private:
-    float _input_gain;
-    std::vector<float> _integrated_samples;
-
     //==============================================================================
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IntravenousAudioProcessor)
+    juce::AudioProcessorValueTreeState& getValueTreeState();
 };
