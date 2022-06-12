@@ -15,7 +15,7 @@
 */
 class IntravenousAudioProcessor  : public juce::AudioProcessor
 {
-    std::vector<float> _integrated_samples;
+    std::vector<float> _output;
     juce::AudioProcessorValueTreeState _value_tree_state;
 
     //==============================================================================

@@ -110,7 +110,7 @@ void IntravenousAudioProcessor::changeProgramName (int index, const juce::String
 //==============================================================================
 void IntravenousAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    _integrated_samples.resize(getTotalNumInputChannels(), 0.0);
+    _output.resize(getTotalNumOutputChannels(), 0.0);
 }
 
 void IntravenousAudioProcessor::releaseResources()
@@ -118,8 +118,8 @@ void IntravenousAudioProcessor::releaseResources()
     // When playback stops, you can use this as an opportunity to free up any
     // spare memory, etc.
 
-    decltype(_integrated_samples) temporary_samples;
-    _integrated_samples.swap(temporary_samples);
+    decltype(_output) temp;
+    _output.swap(temp);
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -175,29 +175,30 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
         for (int sample_index = 0; sample_index < buffer.getNumSamples(); ++sample_index)
         {
-            auto const sample = buffer.getSample(channel, sample_index);
-            float& integrated_sample = _integrated_samples[channel];
+            float const input_sample = buffer.getSample(channel, sample_index);
+            float& output_sample = _output[channel];
 
-            recenter_waveform(channel, sample);
-            integrated_sample += sample * get_parameter(INPUT_GAIN_IDENTIFIER);
+            recenter_waveform(channel, input_sample);
+            output_sample += input_sample * get_parameter(INPUT_GAIN_IDENTIFIER);
             warp_waveform(channel);
-            channelData[sample_index] = integrated_sample * get_parameter(OUTPUT_GAIN_IDENTIFIER);
+            channelData[sample_index] = output_sample * get_parameter(OUTPUT_GAIN_IDENTIFIER);
         }
     }
 }
 
 void IntravenousAudioProcessor::recenter_waveform(int const channel, float const sample)
 {
-    if (sample == 0) _integrated_samples[channel] *= 0.999f;
+    if (sample == 0) _output[channel] *= 0.999f;
 }
 
 void IntravenousAudioProcessor::warp_waveform(int const channel)
 {
-    auto& integrated_sample = _integrated_samples[channel];
-    if (integrated_sample > 0)
-        integrated_sample = std::fmodf(integrated_sample + 1.f, 2) - 1.f;
-    else
-        integrated_sample = 1.f - std::fmodf(-integrated_sample + 1.f, 2);
+    auto& output_sample = _output[channel];
+    auto const factor = 2.;
+    if (output_sample > 1.f)
+        output_sample = std::fmodf((output_sample - 1.f) / factor + 2.f, 2) - 1.f;
+    else if (output_sample < -1.f)
+        output_sample = 1.f - std::fmodf((-output_sample - 1.f) / factor + 2.f, 2);
 }
 
 //==============================================================================
@@ -240,7 +241,7 @@ juce::AudioProcessorValueTreeState& IntravenousAudioProcessor::getValueTreeState
 
 float IntravenousAudioProcessor::get_parameter(juce::StringRef const parameter_identifier) const
 {
-    return _value_tree_state.getRawParameterValue(INPUT_GAIN_IDENTIFIER)->load();
+    return _value_tree_state.getRawParameterValue(parameter_identifier)->load();
 }
 
 //==============================================================================
