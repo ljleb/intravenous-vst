@@ -41,5 +41,9 @@ private:
     juce::Label _warp_scale_label;
     juce::AudioProcessorValueTreeState::SliderAttachment _warp_scale_attachement;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IntravenousAudioProcessorEditor)
+    juce::Slider _warp_offset_slider;
+    juce::Label _warp_offset_label;
+    juce::AudioProcessorValueTreeState::SliderAttachment _warp_offset_attachement;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessorEditor)
 };

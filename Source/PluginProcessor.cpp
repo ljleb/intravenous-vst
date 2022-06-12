@@ -12,6 +12,7 @@
 juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
 juce::String const IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER = "output_gain";
 juce::String const IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER = "warp_scale";
+juce::String const IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER = "warp_offset";
 
 //==============================================================================
 IntravenousAudioProcessor::IntravenousAudioProcessor():
@@ -41,6 +42,11 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 WARP_SCALE_IDENTIFIER,
                 "Warp Scale",
                 juce::NormalisableRange<float>(0.f, 1.f),
+                0.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WARP_OFFSET_IDENTIFIER,
+                "Warp Offset",
+                juce::NormalisableRange<float>(0.f, 2.f),
                 0.f),
         }
     }
@@ -199,17 +205,18 @@ void IntravenousAudioProcessor::recenter_waveform(float& output_sample, float co
 
 void IntravenousAudioProcessor::warp_waveform(float& output_sample) const
 {
-    auto const scaled_fmodf = [this](float const x) {
-        float const wrapped_sample = std::fmodf(x + 1.f, 2.f);
-        float const negative_sample = wrapped_sample - 2.f;
-        float const scaled_sample = negative_sample * get_parameter(WARP_SCALE_IDENTIFIER);
-        return scaled_sample + 1.f;
+    auto const scaled_positive_warp = [this](float const sample) {
+        float const warped_sample = std::fmodf(sample + 1.f, 2.f) - 2.f;
+        float const warp_scale = get_parameter(WARP_SCALE_IDENTIFIER);
+        float const warp_offset = get_parameter(WARP_OFFSET_IDENTIFIER);
+        float const mapped_sample = warped_sample * warp_scale - warp_offset;
+        return mapped_sample + 1.f;
     };
 
     if (output_sample > 1.f)
-        output_sample = scaled_fmodf(output_sample);
+        output_sample = scaled_positive_warp(output_sample);
     else if (output_sample < -1.f)
-        output_sample = -scaled_fmodf(-output_sample);
+        output_sample = -scaled_positive_warp(-output_sample);
 }
 
 //==============================================================================
