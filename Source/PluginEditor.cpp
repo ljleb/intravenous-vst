@@ -45,7 +45,6 @@ void IntravenousAudioProcessorEditor::initialize_slider(juce::Slider& slider, ju
     label.setText(parameter->getName(20), juce::NotificationType::dontSendNotification);
     label.attachToComponent(&slider, false);
     label.setFont(juce::Font(16.f));
-    //label.setColour(juce::Label::textColourId, juce::Colours::lightblue);
     label.setJustificationType(juce::Justification::centred);
 }
 

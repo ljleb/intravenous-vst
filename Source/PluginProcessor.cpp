@@ -176,21 +176,28 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         for (int sample_index = 0; sample_index < buffer.getNumSamples(); ++sample_index)
         {
             auto const sample = buffer.getSample(channel, sample_index);
+            float& integrated_sample = _integrated_samples[channel];
 
-            if (sample == 0) _integrated_samples[channel] *= 0.999f;
-
-            auto const& input_gain = _value_tree_state.getRawParameterValue(INPUT_GAIN_IDENTIFIER)->load();
-            _integrated_samples[channel] += sample * input_gain;
-
-            if (_integrated_samples[channel] > 0)
-                _integrated_samples[channel] = std::fmodf(_integrated_samples[channel] + 1.f, 2) - 1.f;
-            else
-                _integrated_samples[channel] = 1.f - std::fmodf(-_integrated_samples[channel] + 1.f, 2);
-
-            auto const& output_gain = _value_tree_state.getRawParameterValue(OUTPUT_GAIN_IDENTIFIER)->load();
-            channelData[sample_index] = _integrated_samples[channel] * output_gain;
+            recenter_waveform(channel, sample);
+            integrated_sample += sample * get_parameter(INPUT_GAIN_IDENTIFIER);
+            warp_waveform(channel);
+            channelData[sample_index] = integrated_sample * get_parameter(OUTPUT_GAIN_IDENTIFIER);
         }
     }
+}
+
+void IntravenousAudioProcessor::recenter_waveform(int const channel, float const sample)
+{
+    if (sample == 0) _integrated_samples[channel] *= 0.999f;
+}
+
+void IntravenousAudioProcessor::warp_waveform(int const channel)
+{
+    auto& integrated_sample = _integrated_samples[channel];
+    if (integrated_sample > 0)
+        integrated_sample = std::fmodf(integrated_sample + 1.f, 2) - 1.f;
+    else
+        integrated_sample = 1.f - std::fmodf(-integrated_sample + 1.f, 2);
 }
 
 //==============================================================================
@@ -229,6 +236,11 @@ void IntravenousAudioProcessor::setStateInformation (const void* data, int sizeI
 juce::AudioProcessorValueTreeState& IntravenousAudioProcessor::getValueTreeState()
 {
     return _value_tree_state;
+}
+
+float IntravenousAudioProcessor::get_parameter(juce::StringRef const parameter_identifier) const
+{
+    return _value_tree_state.getRawParameterValue(INPUT_GAIN_IDENTIFIER)->load();
 }
 
 //==============================================================================
