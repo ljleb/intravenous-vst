@@ -24,7 +24,6 @@ class IntravenousAudioProcessor  : public juce::AudioProcessor
 public:
     static juce::String const INPUT_GAIN_IDENTIFIER;
     static juce::String const OUTPUT_GAIN_IDENTIFIER;
-    static juce::String const WARP_GAIN_IDENTIFIER;
     static juce::String const WARP_THRESHOLD_IDENTIFIER;
     static juce::String const WARP_SCALE_IDENTIFIER;
     static juce::String const WARP_OFFSET_IDENTIFIER;

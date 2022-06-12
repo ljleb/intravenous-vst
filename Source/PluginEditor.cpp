@@ -16,7 +16,6 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     for (auto const& parameter_identifier : {
         IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER,
         IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER,
-        IntravenousAudioProcessor::WARP_GAIN_IDENTIFIER,
         IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER,
         IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER,
         IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER,

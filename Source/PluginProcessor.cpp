@@ -11,7 +11,6 @@
 
 juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
 juce::String const IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER = "output_gain";
-juce::String const IntravenousAudioProcessor::WARP_GAIN_IDENTIFIER = "wrap_gain";
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
 juce::String const IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER = "warp_scale";
 juce::String const IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER = "warp_offset";
@@ -41,15 +40,10 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 juce::NormalisableRange<float>(0.f, 10.f),
                 1.f),
             std::make_unique<juce::AudioParameterFloat>(
-                WARP_GAIN_IDENTIFIER,
-                "Warp Gain",
-                juce::NormalisableRange<float>(0.f, 2.f),
-                .5f),
-            std::make_unique<juce::AudioParameterFloat>(
                 WARP_THRESHOLD_IDENTIFIER,
                 "Warp Threshold",
                 juce::NormalisableRange<float>(0.f, 1.f),
-                1.f),
+                .5f),
             std::make_unique<juce::AudioParameterFloat>(
                 WARP_SCALE_IDENTIFIER,
                 "Warp Scale",
@@ -226,12 +220,11 @@ void IntravenousAudioProcessor::warp_waveform(float& output_sample) const
     };
 
     float const warp_threshold = get_parameter(WARP_THRESHOLD_IDENTIFIER);
-    float const warp_gain = get_parameter(WARP_GAIN_IDENTIFIER);
 
     if (output_sample > warp_threshold)
-        output_sample = scaled_positive_warp(output_sample) * warp_gain;
+        output_sample = scaled_positive_warp(output_sample);
     else if (output_sample < -warp_threshold)
-        output_sample = -scaled_positive_warp(-output_sample) * warp_gain;
+        output_sample = -scaled_positive_warp(-output_sample);
 }
 
 //==============================================================================
