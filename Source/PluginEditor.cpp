@@ -9,7 +9,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
 IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudioProcessor& p):
     AudioProcessorEditor(&p),
     _audio_processor(p),
@@ -18,11 +17,12 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     _output_gain_slider(IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER),
     _output_gain_attachement(p.getValueTreeState(), IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER, _output_gain_slider)
 {
-    initialize_slider(_input_gain_slider, 0, p.getValueTreeState());
-    initialize_slider(_output_gain_slider, 1, p.getValueTreeState());
+    initialize_slider(_input_gain_slider, _input_gain_label, 0, p.getValueTreeState());
+    initialize_slider(_output_gain_slider, _ouput_gain_label, 1, p.getValueTreeState());
 
     // Make sure that before the constructor has finished, you've set the
     // editor's size to whatever you need it to be.
+    setResizable(false, false);
     setSize(440, 140);
 }
 
@@ -30,19 +30,26 @@ IntravenousAudioProcessorEditor::~IntravenousAudioProcessorEditor()
 {
 }
 
-void IntravenousAudioProcessorEditor::initialize_slider(juce::Slider& slider, uint32_t slider_position, juce::AudioProcessorValueTreeState& value_tree_state)
+void IntravenousAudioProcessorEditor::initialize_slider(juce::Slider& slider, juce::Label& label, uint32_t slider_position, juce::AudioProcessorValueTreeState& value_tree_state)
 {
+    slider.setBounds(100 * slider_position, 25, 105, 105);
+    slider.setTextBoxStyle(juce::Slider::TextEntryBoxPosition::TextBoxBelow, false, 64, 20);
+    slider.setSliderStyle(juce::Slider::SliderStyle::RotaryHorizontalVerticalDrag);
+
     auto const& parameter = value_tree_state.getParameter(slider.getName());
     auto const& range = parameter->getNormalisableRange().getRange();
     slider.setRange(range.getStart(), range.getEnd());
-    slider.setSliderStyle(juce::Slider::SliderStyle::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextEntryBoxPosition::TextBoxBelow, false, 100, 25);
-    slider.setBounds(5 + 105 * slider_position, 5, 105, 105);
     addAndMakeVisible(slider);
+
+    addAndMakeVisible(label);
+    label.setText(parameter->getName(20), juce::NotificationType::dontSendNotification);
+    label.attachToComponent(&slider, false);
+    label.setFont(juce::Font(16.f));
+    //label.setColour(juce::Label::textColourId, juce::Colours::lightblue);
+    label.setJustificationType(juce::Justification::centred);
 }
 
-//==============================================================================
-void IntravenousAudioProcessorEditor::paint (juce::Graphics& g)
+void IntravenousAudioProcessorEditor::paint(juce::Graphics& g)
 {
     // (Our component is opaque, so we must completely fill the background with a solid colour)
     g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
