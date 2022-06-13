@@ -16,6 +16,7 @@
 class IntravenousAudioProcessor  : public juce::AudioProcessor
 {
     std::vector<float> _output;
+    std::vector<float> _low_passed_output;
     juce::AudioProcessorValueTreeState _value_tree_state;
 
     //==============================================================================
@@ -41,8 +42,8 @@ public:
    #endif
 
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
-    void recenter_waveform(float& output_sample, float const input_sample) const;
-    void warp_waveform(float& output_sample) const;
+    float recenter_waveform(float const output_sample, float& low_passed_output_sample) const;
+    float warp_waveform(float const output_sample) const;
 
     //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;

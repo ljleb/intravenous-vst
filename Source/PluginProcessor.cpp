@@ -37,8 +37,8 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
             std::make_unique<juce::AudioParameterFloat>(
                 OUTPUT_GAIN_IDENTIFIER,
                 "Output Gain",
-                juce::NormalisableRange<float>(0.f, 10.f),
-                1.f),
+                juce::NormalisableRange<float>(0.f, 1.f),
+                .25f),
             std::make_unique<juce::AudioParameterFloat>(
                 WARP_THRESHOLD_IDENTIFIER,
                 "Warp Threshold",
@@ -112,23 +112,24 @@ int IntravenousAudioProcessor::getCurrentProgram()
     return 0;
 }
 
-void IntravenousAudioProcessor::setCurrentProgram (int index)
+void IntravenousAudioProcessor::setCurrentProgram(int index)
 {
 }
 
-const juce::String IntravenousAudioProcessor::getProgramName (int index)
+const juce::String IntravenousAudioProcessor::getProgramName(int index)
 {
     return {};
 }
 
-void IntravenousAudioProcessor::changeProgramName (int index, const juce::String& newName)
+void IntravenousAudioProcessor::changeProgramName(int index, const juce::String& newName)
 {
 }
 
 //==============================================================================
-void IntravenousAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void IntravenousAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     _output.resize(getTotalNumInputChannels(), 0.0);
+    _low_passed_output.resize(getTotalNumInputChannels(), 0.0);
 }
 
 void IntravenousAudioProcessor::releaseResources()
@@ -166,10 +167,10 @@ bool IntravenousAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
 }
 #endif
 
-void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
+    auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
     // In case we have more outputs than inputs, this code clears any output
@@ -179,7 +180,7 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     // when they first compile a plugin, but obviously you don't need to keep
     // this code if your algorithm always overwrites all the output channels.
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+        buffer.clear(i, 0, buffer.getNumSamples());
 
     // This is the place where you'd normally do the guts of your plugin's
     // audio processing...
@@ -196,20 +197,22 @@ void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             float const input_sample = buffer.getSample(channel, sample_index);
             float& output_sample = _output[channel];
 
-            recenter_waveform(output_sample, input_sample);
             output_sample = output_sample + input_sample * get_parameter(INPUT_GAIN_IDENTIFIER);
-            warp_waveform(output_sample);
-            channelData[sample_index] = output_sample * get_parameter(OUTPUT_GAIN_IDENTIFIER);
+            output_sample = warp_waveform(output_sample);
+            float const centered_output = recenter_waveform(output_sample, _low_passed_output[channel]);
+            channelData[sample_index] = centered_output * get_parameter(OUTPUT_GAIN_IDENTIFIER);
         }
     }
 }
 
-void IntravenousAudioProcessor::recenter_waveform(float& output_sample, float const input_sample) const
+float IntravenousAudioProcessor::recenter_waveform(float const dry_sample, float& low_passed_output_sample) const
 {
-    if (std::abs(input_sample) < 0.001) output_sample *= 0.999f;
+    float const cutoff_ratio = std::expf(-20.f / getSampleRate());
+    low_passed_output_sample = dry_sample * (1 - cutoff_ratio) + low_passed_output_sample * cutoff_ratio;
+    return dry_sample - low_passed_output_sample;
 }
 
-void IntravenousAudioProcessor::warp_waveform(float& output_sample) const
+float IntravenousAudioProcessor::warp_waveform(float const output_sample) const
 {
     auto const scaled_positive_warp = [this](float const sample) {
         float const warped_sample = std::fmodf(sample + 1.f, 2.f) - 2.f;
@@ -222,9 +225,10 @@ void IntravenousAudioProcessor::warp_waveform(float& output_sample) const
     float const warp_threshold = get_parameter(WARP_THRESHOLD_IDENTIFIER);
 
     if (output_sample > warp_threshold)
-        output_sample = scaled_positive_warp(output_sample);
+        return scaled_positive_warp(output_sample);
     else if (output_sample < -warp_threshold)
-        output_sample = -scaled_positive_warp(-output_sample);
+        return -scaled_positive_warp(-output_sample);
+    else return output_sample;
 }
 
 //==============================================================================
