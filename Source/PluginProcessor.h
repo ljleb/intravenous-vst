@@ -23,6 +23,7 @@ class IntravenousAudioProcessor  : public juce::AudioProcessor
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
 public:
+    static juce::String const INTEGRAL_IDENTIFIER;
     static juce::String const INPUT_GAIN_IDENTIFIER;
     static juce::String const OUTPUT_GAIN_IDENTIFIER;
     static juce::String const WARP_THRESHOLD_IDENTIFIER;

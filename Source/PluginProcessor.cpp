@@ -9,6 +9,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+juce::String const IntravenousAudioProcessor::INTEGRAL_IDENTIFIER = "integral";
 juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
 juce::String const IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER = "output_gain";
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
@@ -30,9 +31,14 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     _value_tree_state {
         *this, nullptr, "PARAMETERS", {
             std::make_unique<juce::AudioParameterFloat>(
+                INTEGRAL_IDENTIFIER,
+                "Integral",
+                juce::NormalisableRange<float>(0.f, 1.f),
+                1.f),
+            std::make_unique<juce::AudioParameterFloat>(
                 INPUT_GAIN_IDENTIFIER,
                 "Input Gain",
-                juce::NormalisableRange<float>(0.f, 10.f),
+                juce::NormalisableRange<float>(0.f, 1.f),
                 1.f),
             std::make_unique<juce::AudioParameterFloat>(
                 OUTPUT_GAIN_IDENTIFIER,
@@ -43,7 +49,7 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 WARP_THRESHOLD_IDENTIFIER,
                 "Warp Threshold",
                 juce::NormalisableRange<float>(0.f, 1.f),
-                .5f),
+                1.f),
             std::make_unique<juce::AudioParameterFloat>(
                 WARP_SCALE_IDENTIFIER,
                 "Warp Scale",
@@ -128,6 +134,15 @@ void IntravenousAudioProcessor::changeProgramName(int index, const juce::String&
 //==============================================================================
 void IntravenousAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    {
+        decltype(_output) temp;
+        _output.swap(temp);
+    }
+    {
+        decltype(_low_passed_output) temp;
+        _low_passed_output.swap(temp);
+    }
+
     _output.resize(getTotalNumInputChannels(), 0.0);
     _low_passed_output.resize(getTotalNumInputChannels(), 0.0);
 }
@@ -137,12 +152,10 @@ void IntravenousAudioProcessor::releaseResources()
     // When playback stops, you can use this as an opportunity to free up any
     // spare memory, etc.
 
-    //decltype(_output) temp;
-    //_output.swap(temp);
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
-bool IntravenousAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool IntravenousAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
   #if JucePlugin_IsMidiEffect
     juce::ignoreUnused (layouts);
@@ -197,7 +210,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             float const input_sample = buffer.getSample(channel, sample_index);
             float& output_sample = _output[channel];
 
-            output_sample = output_sample + input_sample * get_parameter(INPUT_GAIN_IDENTIFIER);
+            output_sample = output_sample * get_parameter(INTEGRAL_IDENTIFIER) + input_sample * get_parameter(INPUT_GAIN_IDENTIFIER);
             output_sample = warp_waveform(output_sample);
             float const centered_output = recenter_waveform(output_sample, _low_passed_output[channel]);
             channelData[sample_index] = centered_output * get_parameter(OUTPUT_GAIN_IDENTIFIER);

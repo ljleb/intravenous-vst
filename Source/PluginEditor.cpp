@@ -14,11 +14,12 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     _audio_processor(p)
 {
     for (auto const& parameter_identifier : {
+        IntravenousAudioProcessor::INTEGRAL_IDENTIFIER,
         IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER,
-        IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER,
-        IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER,
         IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER,
         IntravenousAudioProcessor::WARP_OFFSET_IDENTIFIER,
+        IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER,
+        IntravenousAudioProcessor::OUTPUT_GAIN_IDENTIFIER,
     }) {
         _slider_packs.emplace_back(
             std::make_unique<SliderPack>(
