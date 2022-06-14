@@ -15,7 +15,7 @@ private:
     class SliderPack {
         juce::Slider _slider;
         juce::Label _label;
-        juce::AudioProcessorValueTreeState::SliderAttachment _attachement;
+        juce::AudioProcessorValueTreeState::SliderAttachment _attachment;
 
     public:
         SliderPack(
@@ -29,6 +29,8 @@ private:
 
     IntravenousAudioProcessor& _audio_processor;
     std::vector<std::unique_ptr<SliderPack>> _slider_packs;
+    juce::ToggleButton _integrate_button;
+    juce::AudioProcessorValueTreeState::ButtonAttachment _integrate_attachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessorEditor)
 };

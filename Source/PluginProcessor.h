@@ -10,6 +10,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
 
     juce::AudioProcessorValueTreeState _value_tree_state;
 
+    std::atomic<float>* _integrate;
     std::atomic<float>* _dry_gain;
     std::atomic<float>* _wet_gain;
     std::atomic<float>* _input_gain;
@@ -25,6 +26,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
 public:
+    static juce::String const INTEGRATE_IDENTIFIER;
     static juce::String const DRY_GAIN_IDENTIFIER;
     static juce::String const WET_GAIN_IDENTIFIER;
     static juce::String const INPUT_GAIN_IDENTIFIER;
@@ -49,7 +51,7 @@ public:
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
 private:
-    void update_input_loudness(float const&, float const&);
+    void update_input_loudness(float const&, float const&, int const&);
     float recenter_waveform(float const, float&) const;
     float warp_sample(
         float const&,

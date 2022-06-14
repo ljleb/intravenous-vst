@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+juce::String const IntravenousAudioProcessor::INTEGRATE_IDENTIFIER = "integrate";
 juce::String const IntravenousAudioProcessor::DRY_GAIN_IDENTIFIER = "dry_gain";
 juce::String const IntravenousAudioProcessor::WET_GAIN_IDENTIFIER = "wet_gain";
 juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
@@ -23,6 +24,9 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     #endif
     _value_tree_state {
         *this, nullptr, "PARAMETERS", {
+            std::make_unique<juce::AudioParameterBool>(
+                INTEGRATE_IDENTIFIER,
+                "Integrate", false),
             std::make_unique<juce::AudioParameterFloat>(
                 DRY_GAIN_IDENTIFIER,
                 "Dry Gain",
@@ -41,7 +45,7 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
             std::make_unique<juce::AudioParameterFloat>(
                 INPUT_OFFSET_IDENTIFIER,
                 "Input Offset",
-                juce::NormalisableRange<float>(-1.f, 1.f, .0001f, .25f, true),
+                juce::NormalisableRange<float>(-2.f, 2.f, .0001f, .25f, true),
                 0.f),
             std::make_unique<juce::AudioParameterInt>(
                 INPUT_OFFSET_DECAY_IDENTIFIER,
@@ -65,6 +69,7 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 -.25f),
         }
     },
+    _integrate(_value_tree_state.getRawParameterValue(INTEGRATE_IDENTIFIER)),
     _dry_gain(_value_tree_state.getRawParameterValue(DRY_GAIN_IDENTIFIER)),
     _wet_gain(_value_tree_state.getRawParameterValue(WET_GAIN_IDENTIFIER)),
     _input_gain(_value_tree_state.getRawParameterValue(INPUT_GAIN_IDENTIFIER)),
@@ -166,6 +171,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     for (int sample_index = 0; sample_index < buffer.getNumSamples(); ++sample_index)
     {
+        float const integral_gain = _integrate->load();
         float const dry_gain = _dry_gain->load();
         float const wet_gain = _wet_gain->load();
         float const input_gain = _input_gain->load();
@@ -174,15 +180,16 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         float const warp_threshold = _warp_threshold->load();
         float const warp_scale = _warp_scale->load();
         float const warp_destination = _warp_destination->load();
+        float const input_loudness = _input_loudness;
 
         for (int channel = 0; channel < input_channels; ++channel)
         {
             float& input_sample = write_buffer[channel][sample_index];
             float& output_sample = _output[channel];
 
-            update_input_loudness(input_sample, input_offset_decay);
-            output_sample += input_sample * input_gain + input_offset * _input_loudness;
+            output_sample = output_sample * integral_gain + input_sample * input_gain + input_offset * input_loudness;
             output_sample = warp_sample(output_sample, warp_threshold, warp_scale, warp_destination);
+            update_input_loudness(input_sample, input_offset_decay, input_channels);
 
             float const centered_sample = recenter_waveform(output_sample, _low_passed_output[channel]);
             input_sample = input_sample * dry_gain + centered_sample * wet_gain;
@@ -193,8 +200,8 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 void IntravenousAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) {
 }
 
-void IntravenousAudioProcessor::update_input_loudness(float const& dry_sample, float const& input_offset_decay) {
-    if (std::abs(dry_sample) > _input_loudness || _samples_since_input_loudness_update >= input_offset_decay) {
+void IntravenousAudioProcessor::update_input_loudness(float const& dry_sample, float const& input_offset_decay, int const& input_channels) {
+    if (std::abs(dry_sample) > _input_loudness || _samples_since_input_loudness_update >= input_offset_decay * input_channels) {
         _input_loudness = std::abs(dry_sample);
         _samples_since_input_loudness_update = 0;
     }

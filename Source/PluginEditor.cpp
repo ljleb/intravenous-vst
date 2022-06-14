@@ -3,7 +3,8 @@
 
 IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudioProcessor& audio_processor, juce::AudioProcessorValueTreeState& value_tree_state):
     AudioProcessorEditor(&audio_processor),
-    _audio_processor(audio_processor)
+    _audio_processor(audio_processor),
+    _integrate_attachment(value_tree_state, IntravenousAudioProcessor::INTEGRATE_IDENTIFIER, _integrate_button)
 {
     for (auto const& parameter_identifier: {
         IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER,
@@ -20,11 +21,16 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
                 *this,
                 value_tree_state,
                 parameter_identifier,
-                static_cast<unsigned int>(_slider_packs.size())));
+                static_cast<unsigned int>(_slider_packs.size() + 1)));
     }
 
+    auto const& integrate_parameter = value_tree_state.getParameter(IntravenousAudioProcessor::INTEGRATE_IDENTIFIER);
+    _integrate_button.setBounds(0, 25, 105, 105);
+    _integrate_button.setButtonText(integrate_parameter->getName(20));
+    addAndMakeVisible(_integrate_button);
+
     setResizable(false, false);
-    setSize(static_cast<unsigned int>(_slider_packs.size() * 100), 140);
+    setSize(static_cast<unsigned int>((_slider_packs.size() + 1) * 100), 140);
 }
 
 IntravenousAudioProcessorEditor::~IntravenousAudioProcessorEditor() {
@@ -37,7 +43,7 @@ IntravenousAudioProcessorEditor::SliderPack::SliderPack(
     unsigned int slider_position
 ):
     _slider(parameter_identifier),
-    _attachement(value_tree_state, parameter_identifier, _slider)
+    _attachment(value_tree_state, parameter_identifier, _slider)
 {
     _slider.setBounds(100 * slider_position, 25, 105, 105);
     _slider.setTextBoxStyle(juce::Slider::TextEntryBoxPosition::TextBoxBelow, false, 64, 20);
