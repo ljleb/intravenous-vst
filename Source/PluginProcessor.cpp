@@ -203,12 +203,12 @@ float IntravenousAudioProcessor::warp_sample(
 }
 
 float IntravenousAudioProcessor::warp_positive_sample(
-    float const& sample,
+    float const& dry_sample,
     float const& warp_threshold,
     float const& warp_scale,
     float const& warp_destination
 ) const {
-    float const skewed_sample = (sample - warp_threshold) * warp_scale;
+    float const skewed_sample = (dry_sample - warp_threshold) * warp_scale;
     float const warped_sample = std::fmodf(skewed_sample, 2.f) + warp_destination;
     return warped_sample;
 };
@@ -229,7 +229,7 @@ void IntravenousAudioProcessor::getStateInformation (juce::MemoryBlock& write_bu
 
 void IntravenousAudioProcessor::setStateInformation (const void* data, int size_in_bytes) {
     auto xml_state = getXmlFromBinary(data, size_in_bytes);
-    if (xml_state.get() != nullptr && xml_state->hasTagName(_value_tree_state.state.getType()))
+    if (xml_state && xml_state->hasTagName(_value_tree_state.state.getType()))
         _value_tree_state.replaceState(juce::ValueTree::fromXml(*xml_state));
 }
 
