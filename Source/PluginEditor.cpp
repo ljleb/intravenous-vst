@@ -5,7 +5,7 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     AudioProcessorEditor(&audio_processor),
     _audio_processor(audio_processor)
 {
-    for (auto const& parameter_identifier : {
+    for (auto const& parameter_identifier: {
         IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER,
         IntravenousAudioProcessor::INPUT_OFFSET_IDENTIFIER,
         IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER,

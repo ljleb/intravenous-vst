@@ -1,8 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 
-class IntravenousAudioProcessor final : public juce::AudioProcessor
-{
+class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::vector<float> _output;
     std::vector<float> _low_passed_output;
     juce::AudioProcessorValueTreeState _value_tree_state;

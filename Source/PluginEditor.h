@@ -1,32 +1,18 @@
-/*
-  ==============================================================================
-
-    This file contains the basic framework code for a JUCE plugin editor.
-
-  ==============================================================================
-*/
-
 #pragma once
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
-//==============================================================================
-/**
-*/
-class IntravenousAudioProcessorEditor : public juce::AudioProcessorEditor
-{
+class IntravenousAudioProcessorEditor final: public juce::AudioProcessorEditor {
 public:
     IntravenousAudioProcessorEditor(IntravenousAudioProcessor&, juce::AudioProcessorValueTreeState&);
     ~IntravenousAudioProcessorEditor() override;
 
-    //==============================================================================
-    void paint (juce::Graphics&) override;
+    void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
-    class SliderPack
-    {
+    class SliderPack {
         juce::Slider _slider;
         juce::Label _label;
         juce::AudioProcessorValueTreeState::SliderAttachment _attachement;
