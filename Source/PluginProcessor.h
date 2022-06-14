@@ -4,12 +4,17 @@
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::vector<float> _output;
     std::vector<float> _low_passed_output;
+
+    float _input_loudness;
+    size_t _samples_since_input_loudness_update;
+
     juce::AudioProcessorValueTreeState _value_tree_state;
 
     std::atomic<float>* _dry_gain;
     std::atomic<float>* _wet_gain;
     std::atomic<float>* _input_gain;
     std::atomic<float>* _input_offset;
+    std::atomic<float>* _input_offset_decay;
     std::atomic<float>* _warp_threshold;
     std::atomic<float>* _warp_scale;
     std::atomic<float>* _warp_destination;
@@ -24,6 +29,7 @@ public:
     static juce::String const WET_GAIN_IDENTIFIER;
     static juce::String const INPUT_GAIN_IDENTIFIER;
     static juce::String const INPUT_OFFSET_IDENTIFIER;
+    static juce::String const INPUT_OFFSET_DECAY_IDENTIFIER;
     static juce::String const WARP_THRESHOLD_IDENTIFIER;
     static juce::String const WARP_SCALE_IDENTIFIER;
     static juce::String const WARP_DESTINATION_IDENTIFIER;
@@ -43,6 +49,7 @@ public:
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
 private:
+    void update_input_loudness(float const&, float const&);
     float recenter_waveform(float const, float&) const;
     float warp_sample(
         float const&,
