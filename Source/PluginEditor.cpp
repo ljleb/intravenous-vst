@@ -26,8 +26,8 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     setSize(static_cast<unsigned int>(_slider_packs.size() * 100), 140);
 }
 
-IntravenousAudioProcessorEditor::~IntravenousAudioProcessorEditor()
-{}
+IntravenousAudioProcessorEditor::~IntravenousAudioProcessorEditor() {
+}
 
 IntravenousAudioProcessorEditor::SliderPack::SliderPack(
     IntravenousAudioProcessorEditor& editor,
@@ -51,10 +51,9 @@ IntravenousAudioProcessorEditor::SliderPack::SliderPack(
     editor.addAndMakeVisible(_label);
 }
 
-void IntravenousAudioProcessorEditor::paint(juce::Graphics& graphics)
-{
+void IntravenousAudioProcessorEditor::paint(juce::Graphics& graphics) {
     graphics.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 }
 
-void IntravenousAudioProcessorEditor::resized()
-{}
+void IntravenousAudioProcessorEditor::resized() {
+}
