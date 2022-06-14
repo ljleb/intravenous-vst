@@ -45,8 +45,16 @@ public:
 
 private:
     float recenter_waveform(float const, float&) const;
-    float warp_sample(float const) const;
-    float warp_positive_sample(float const, float const&) const;
+    float warp_sample(
+        float const&,
+        float const&,
+        float const&,
+        float const&) const;
+    float warp_positive_sample(
+        float const&,
+        float const&,
+        float const&,
+        float const&) const;
 
 public:
     juce::AudioProcessorEditor* createEditor() override;
