@@ -17,7 +17,7 @@
 class IntravenousAudioProcessorEditor : public juce::AudioProcessorEditor
 {
 public:
-    IntravenousAudioProcessorEditor(IntravenousAudioProcessor&);
+    IntravenousAudioProcessorEditor(IntravenousAudioProcessor&, juce::AudioProcessorValueTreeState&);
     ~IntravenousAudioProcessorEditor() override;
 
     //==============================================================================
