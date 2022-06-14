@@ -27,9 +27,6 @@ private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SliderPack)
     };
 
-    void emplace_slider(juce::StringRef const parameter_identifier, juce::AudioProcessorValueTreeState& value_tree_state);
-    void initialize_slider(juce::Slider& slider, juce::Label& label, unsigned int slider_position, juce::AudioProcessorValueTreeState& value_tree_state);
-
     IntravenousAudioProcessor& _audio_processor;
     std::vector<std::unique_ptr<SliderPack>> _slider_packs;
 
