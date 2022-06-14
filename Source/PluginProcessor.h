@@ -2,8 +2,8 @@
 #include <JuceHeader.h>
 
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
-    std::vector<float> _output;
-    std::vector<float> _low_passed_output;
+    std::vector<float> _last_output;
+    std::vector<float> _low_passed_last_output;
 
     float _input_loudness;
     size_t _samples_since_input_loudness_update;
