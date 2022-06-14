@@ -194,7 +194,7 @@ void IntravenousAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>&, 
 }
 
 void IntravenousAudioProcessor::update_input_loudness(float const& dry_sample, float const& input_offset_decay) {
-    if (std::abs(dry_sample) > _input_loudness || _samples_since_input_loudness_update > input_offset_decay) {
+    if (std::abs(dry_sample) > _input_loudness || _samples_since_input_loudness_update >= input_offset_decay) {
         _input_loudness = std::abs(dry_sample);
         _samples_since_input_loudness_update = 0;
     }
