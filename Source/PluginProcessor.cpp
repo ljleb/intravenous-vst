@@ -170,7 +170,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             float& input_sample = write_buffer[channel][sample_index];
             float& output_sample = _output[channel];
 
-            output_sample = output_sample + input_sample * input_gain + input_offset;
+            output_sample += input_sample * input_gain + input_offset;
             output_sample = warp_sample(output_sample, warp_threshold, warp_scale, warp_destination);
 
             float const centered_sample = recenter_waveform(output_sample, _low_passed_output[channel]);
