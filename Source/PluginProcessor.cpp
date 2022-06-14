@@ -10,16 +10,16 @@ juce::String const IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER = "warp_scal
 juce::String const IntravenousAudioProcessor::WARP_DESTINATION_IDENTIFIER = "warp_destination";
 
 IntravenousAudioProcessor::IntravenousAudioProcessor():
-#ifndef JucePlugin_PreferredChannelConfigurations
-    AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                     #endif
-                       ),
-#endif
+    #ifndef JucePlugin_PreferredChannelConfigurations
+        AudioProcessor(BusesProperties()
+            #if ! JucePlugin_IsMidiEffect
+                #if ! JucePlugin_IsSynth
+                    .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                #endif
+                .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+            #endif
+        ),
+    #endif
     _value_tree_state {
         *this, nullptr, "PARAMETERS", {
             std::make_unique<juce::AudioParameterFloat>(
