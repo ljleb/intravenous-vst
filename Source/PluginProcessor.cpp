@@ -1,6 +1,5 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include <charconv>
 
 juce::String const IntravenousAudioProcessor::INTEGRATE_IDENTIFIER = "integrate";
 juce::String const IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER = "remove_dc_offset";
