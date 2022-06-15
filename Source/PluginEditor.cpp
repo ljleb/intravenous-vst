@@ -29,6 +29,7 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
         IntravenousAudioProcessor::INTEGRATE_IDENTIFIER,
         IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER,
         IntravenousAudioProcessor::INVERT_WARP_IDENTIFIER,
+        IntravenousAudioProcessor::CLIP_OVERWARP_IDENTIFIER,
     }) {
         _button_packs.emplace_back(
             std::make_unique<ButtonPack>(
