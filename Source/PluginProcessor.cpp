@@ -189,7 +189,7 @@ bool IntravenousAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
                 return false;
         #endif
 
-            return true;
+        return true;
     #endif
 }
 #endif
