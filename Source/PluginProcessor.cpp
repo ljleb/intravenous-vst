@@ -154,7 +154,6 @@ void IntravenousAudioProcessor::changeProgramName(int index, const juce::String&
 }
 
 void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_per_block) {
-    _value_tree_state.getParameter(INPUT_OFFSET_DECAY_IDENTIFIER);
     clearSideEffects();
 }
 
