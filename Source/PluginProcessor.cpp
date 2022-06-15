@@ -196,8 +196,8 @@ bool IntravenousAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
 
 void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
     juce::ScopedNoDenormals no_denormals;
-    auto input_channels = getTotalNumInputChannels();
-    auto output_channels = getTotalNumOutputChannels();
+    int const input_channels = getTotalNumInputChannels();
+    jassert(input_channels == getTotalNumOutputChannels());
 
     float* const* const write_buffer = buffer.getArrayOfWritePointers();
 
@@ -221,7 +221,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         for (int channel = 0; channel < input_channels; ++channel)
         {
             float& input_sample = write_buffer[channel][sample_index];
-            update_input_loudness(input_sample, input_offset_decay, input_gain, _input_loudness[channel]);
+            update_input_loudness(input_sample, input_offset_decay, _input_loudness[channel]);
 
             float output_sample = _last_output[channel] * integral_gain;
             output_sample += (input_sample - _last_input[channel] * differential_gain) * input_gain;
@@ -250,7 +250,7 @@ float interpolate(float const& min, float const& max, float const& ratio) {
     return min + (max - min) * ratio;
 }
 
-void IntravenousAudioProcessor::update_input_loudness(float const& dry_sample, float const& input_offset_decay, float const& input_gain, float& input_loudness) {
+void IntravenousAudioProcessor::update_input_loudness(float const& dry_sample, float const& input_offset_decay, float& input_loudness) {
     float const cutoff_ratio = std::expf(-input_offset_decay);
     input_loudness = interpolate(std::abs(dry_sample), input_loudness, cutoff_ratio);
 }

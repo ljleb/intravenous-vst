@@ -58,7 +58,7 @@ public:
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
 private:
-    void update_input_loudness(float const&, float const&, float const&, float&);
+    void update_input_loudness(float const&, float const&, float&);
     float remove_dc_offset(float const&, float const&, float&) const;
     float warp_sample(float const&, float const&, float const&, float const&, float const&, float const&, float const&) const;
     float warp_positive_sample(float const&, float const&, float const&, float const&, float const&, float const&, float const&) const;
