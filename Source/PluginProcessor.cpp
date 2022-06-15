@@ -220,7 +220,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
         for (int channel = 0; channel < input_channels; ++channel)
         {
-            float& input_sample = write_buffer[channel][sample_index];
+            float const input_sample = write_buffer[channel][sample_index];
             update_input_loudness(input_sample, input_offset_decay, _input_loudness[channel]);
 
             float output_sample = _last_output[channel] * integral_gain;
@@ -234,11 +234,12 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 warp_scale,
                 invert_warp_gain,
                 clip_overwarp_gain);
+
+            _last_input[channel] = input_sample;
             _last_output[channel] = output_sample;
 
             output_sample = remove_dc_offset(output_sample, dc_offset_gain, _low_passed_last_output[channel]);
-            _last_input[channel] = input_sample;
-            input_sample = input_sample * dry_gain + output_sample * wet_gain;
+            write_buffer[channel][sample_index] = input_sample * dry_gain + output_sample * wet_gain;
         }
     }
 }
