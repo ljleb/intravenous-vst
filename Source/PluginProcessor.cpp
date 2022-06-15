@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 
 juce::String const IntravenousAudioProcessor::INTEGRATE_IDENTIFIER = "integrate";
+juce::String const IntravenousAudioProcessor::DIFFERENTIATE_IDENTIFIER = "differentiate";
 juce::String const IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER = "remove_dc_offset";
 juce::String const IntravenousAudioProcessor::INVERT_WARP_IDENTIFIER = "invert_warp";
 juce::String const IntravenousAudioProcessor::DRY_GAIN_IDENTIFIER = "dry_gain";
@@ -30,11 +31,15 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
             std::make_unique<juce::AudioParameterBool>(
                 INTEGRATE_IDENTIFIER,
                 "Integrate",
-                false),
+                true),
+            std::make_unique<juce::AudioParameterBool>(
+                DIFFERENTIATE_IDENTIFIER,
+                "Differentiate",
+                true),
             std::make_unique<juce::AudioParameterBool>(
                 REMOVE_DC_OFFSET_IDENTIFIER,
                 "Remove DC Offset",
-                false),
+                true),
             std::make_unique<juce::AudioParameterBool>(
                 INVERT_WARP_IDENTIFIER,
                 "Invert Warp",
@@ -62,8 +67,8 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
             std::make_unique<juce::AudioParameterFloat>(
                 INPUT_OFFSET_DECAY_IDENTIFIER,
                 "Input Offset Decay",
-                juce::NormalisableRange<float>(0.f, 20000.f, 1.f, .25f),
-                20000.f),
+                juce::NormalisableRange<float>(0.f, 1.f, .0001f, .25f),
+                1.f),
             std::make_unique<juce::AudioParameterFloat>(
                 WARP_THRESHOLD_IDENTIFIER,
                 "Warp Threshold",
@@ -87,6 +92,7 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
         }
     },
     _integral_gain(_value_tree_state.getRawParameterValue(INTEGRATE_IDENTIFIER)),
+    _differential_gain(_value_tree_state.getRawParameterValue(DIFFERENTIATE_IDENTIFIER)),
     _dc_offset_gain(_value_tree_state.getRawParameterValue(REMOVE_DC_OFFSET_IDENTIFIER)),
     _invert_warp_gain(_value_tree_state.getRawParameterValue(INVERT_WARP_IDENTIFIER)),
     _dry_gain(_value_tree_state.getRawParameterValue(DRY_GAIN_IDENTIFIER)),
@@ -142,6 +148,7 @@ void IntravenousAudioProcessor::changeProgramName(int index, const juce::String&
 }
 
 void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_per_block) {
+    _value_tree_state.getParameter(INPUT_OFFSET_DECAY_IDENTIFIER);
     clearSideEffects();
 }
 
@@ -158,6 +165,7 @@ void IntravenousAudioProcessor::clearSideEffects() {
 
     reset_samples(_last_output);
     reset_samples(_low_passed_last_output);
+    reset_samples(_last_input);
     reset_samples(_input_loudness);
 }
 
@@ -191,6 +199,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     for (int sample_index = 0; sample_index < buffer.getNumSamples(); ++sample_index)
     {
         float const integral_gain = _integral_gain->load();
+        float const differential_gain = _differential_gain->load();
         float const dc_offset_gain = _dc_offset_gain->load();
         float const invert_warp_gain = _invert_warp_gain->load();
         float const dry_gain = _dry_gain->load();
@@ -209,12 +218,13 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             update_input_loudness(input_sample, input_offset_decay, input_gain, _input_loudness[channel]);
 
             float output_sample = _last_output[channel] * integral_gain;
-            output_sample += input_sample * input_gain;
+            output_sample += (input_sample - _last_input[channel] * differential_gain) * input_gain;
             output_sample += input_offset * _input_loudness[channel];
             output_sample = warp_sample(output_sample, warp_threshold, warp_pre_gain, warp_destination, warp_scale, invert_warp_gain);
             _last_output[channel] = output_sample;
 
             output_sample = remove_dc_offset(output_sample, dc_offset_gain, _low_passed_last_output[channel]);
+            _last_input[channel] = input_sample;
             input_sample = input_sample * dry_gain + output_sample * wet_gain;
         }
     }
@@ -228,7 +238,7 @@ float interpolate(float const& min, float const& max, float const& ratio) {
 }
 
 void IntravenousAudioProcessor::update_input_loudness(float const& dry_sample, float const& input_offset_decay, float const& input_gain, float& input_loudness) {
-    float const cutoff_ratio = std::expf(-input_offset_decay / static_cast<float>(getSampleRate()));
+    float const cutoff_ratio = std::expf(-input_offset_decay);
     input_loudness = interpolate(std::abs(dry_sample), input_loudness, cutoff_ratio);
 }
 
@@ -262,12 +272,10 @@ float IntravenousAudioProcessor::warp_positive_sample(
     float const& warp_scale,
     float const& invert_warp_gain
 ) const {
-    float const inverted_warp_destination = interpolate(warp_destination, -warp_destination, invert_warp_gain);
-    float const inverted_warp_scale = interpolate(warp_scale, -warp_scale, invert_warp_gain);
-
     float const skewed_sample = (dry_sample - warp_threshold) * warp_pre_gain;
-    float const warped_sample = std::fmodf(skewed_sample, 2.f);
-    return warped_sample * inverted_warp_scale + inverted_warp_destination;
+    float const warped_sample = std::fmodf(skewed_sample, 2.f) * warp_scale + warp_destination;
+    float const sign = 1.f - 2.f * invert_warp_gain;
+    return warped_sample * sign;
 };
 
 bool IntravenousAudioProcessor::hasEditor() const {

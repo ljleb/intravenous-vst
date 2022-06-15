@@ -4,12 +4,14 @@
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::vector<float> _last_output;
     std::vector<float> _low_passed_last_output;
+    std::vector<float> _last_input;
 
     std::vector<float> _input_loudness;
 
     juce::AudioProcessorValueTreeState _value_tree_state;
 
     std::atomic<float>* _integral_gain;
+    std::atomic<float>* _differential_gain;
     std::atomic<float>* _dc_offset_gain;
     std::atomic<float>* _invert_warp_gain;
     std::atomic<float>* _dry_gain;
@@ -26,6 +28,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
 
 public:
     static juce::String const INTEGRATE_IDENTIFIER;
+    static juce::String const DIFFERENTIATE_IDENTIFIER;
     static juce::String const REMOVE_DC_OFFSET_IDENTIFIER;
     static juce::String const INVERT_WARP_IDENTIFIER;
     static juce::String const DRY_GAIN_IDENTIFIER;

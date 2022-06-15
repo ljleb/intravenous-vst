@@ -25,6 +25,7 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     }
 
     for (auto const& parameter_identifier: {
+        IntravenousAudioProcessor::DIFFERENTIATE_IDENTIFIER,
         IntravenousAudioProcessor::INTEGRATE_IDENTIFIER,
         IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER,
         IntravenousAudioProcessor::INVERT_WARP_IDENTIFIER,
