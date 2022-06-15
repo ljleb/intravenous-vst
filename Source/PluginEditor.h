@@ -27,10 +27,23 @@ private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SliderPack)
     };
 
+    class ButtonPack {
+        juce::ToggleButton _button;
+        juce::AudioProcessorValueTreeState::ButtonAttachment _attachment;
+
+    public:
+        ButtonPack(
+            IntravenousAudioProcessorEditor& editor,
+            juce::AudioProcessorValueTreeState& value_tree_state,
+            juce::StringRef const parameter_identifier,
+            unsigned int slider_position);
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ButtonPack)
+    };
+
     IntravenousAudioProcessor& _audio_processor;
     std::vector<std::unique_ptr<SliderPack>> _slider_packs;
-    juce::ToggleButton _integrate_button;
-    juce::AudioProcessorValueTreeState::ButtonAttachment _integrate_attachment;
+    std::vector<std::unique_ptr<ButtonPack>> _button_packs;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessorEditor)
 };
