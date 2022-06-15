@@ -22,9 +22,6 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::atomic<float>* _warp_destination;
     std::atomic<float>* _warp_scale;
 
-    std::chrono::high_resolution_clock::time_point _begin;
-    std::chrono::high_resolution_clock::time_point _end;
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
 public:
