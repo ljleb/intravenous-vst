@@ -191,12 +191,6 @@ float interpolate(float const& min, float const& max, float const& ratio) {
     return min + (max - min) * ratio;
 }
 
-float detect_noise(float const& sample) {
-    static constexpr float const transition_earliness = 32.f;
-    static constexpr float const transition_sharpness = 8.f;
-    return 1.f - std::powf(1.f - 1.f / std::powf(2.f, 1.f / transition_earliness * std::abs(sample)), transition_sharpness);
-}
-
 void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
     juce::ScopedNoDenormals no_denormals;
     int const channels = getTotalNumInputChannels();
