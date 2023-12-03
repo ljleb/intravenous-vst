@@ -1,208 +1,306 @@
-/*
-  ==============================================================================
-
-    This file contains the basic framework code for a JUCE plugin processor.
-
-  ==============================================================================
-*/
-
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
-IntravenousAudioProcessor::IntravenousAudioProcessor()
-#ifndef JucePlugin_PreferredChannelConfigurations
-    : AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                     #endif
-                       )
-#endif
-{
+juce::String const IntravenousAudioProcessor::INTEGRATE_IDENTIFIER = "integrate";
+juce::String const IntravenousAudioProcessor::DIFFERENTIATE_IDENTIFIER = "differentiate";
+juce::String const IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER = "remove_dc_offset";
+juce::String const IntravenousAudioProcessor::INVERT_WARP_IDENTIFIER = "invert_warp";
+juce::String const IntravenousAudioProcessor::CLIP_OVERWARP_IDENTIFIER = "clip_overwarp";
+juce::String const IntravenousAudioProcessor::DRY_GAIN_IDENTIFIER = "dry_gain";
+juce::String const IntravenousAudioProcessor::WET_GAIN_IDENTIFIER = "wet_gain";
+juce::String const IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER = "input_gain";
+juce::String const IntravenousAudioProcessor::INPUT_OFFSET_IDENTIFIER = "input_offset";
+juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
+juce::String const IntravenousAudioProcessor::WARP_PRE_GAIN_IDENTIFIER = "warp_pre_gain";
+juce::String const IntravenousAudioProcessor::WARP_DESTINATION_IDENTIFIER = "warp_destination";
+juce::String const IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER = "warp_scale";
+
+IntravenousAudioProcessor::IntravenousAudioProcessor():
+    #ifndef JucePlugin_PreferredChannelConfigurations
+        AudioProcessor(BusesProperties()
+            #if ! JucePlugin_IsMidiEffect
+                #if ! JucePlugin_IsSynth
+                    .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                #endif
+                .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+            #endif
+        ),
+    #endif
+    _value_tree_state {
+        *this, nullptr, "PARAMETERS", {
+            std::make_unique<juce::AudioParameterBool>(
+                INTEGRATE_IDENTIFIER,
+                "Integrate",
+                true),
+            std::make_unique<juce::AudioParameterBool>(
+                DIFFERENTIATE_IDENTIFIER,
+                "Differentiate",
+                true),
+            std::make_unique<juce::AudioParameterBool>(
+                REMOVE_DC_OFFSET_IDENTIFIER,
+                "Remove DC Offset",
+                true),
+            std::make_unique<juce::AudioParameterBool>(
+                INVERT_WARP_IDENTIFIER,
+                "Invert Warp",
+                false),
+            std::make_unique<juce::AudioParameterBool>(
+                CLIP_OVERWARP_IDENTIFIER,
+                "Clip Overwarp",
+                true),
+            std::make_unique<juce::AudioParameterFloat>(
+                DRY_GAIN_IDENTIFIER,
+                "Dry Gain",
+                juce::NormalisableRange<float>(0.f, 1.f, .0001f),
+                0.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WET_GAIN_IDENTIFIER,
+                "Wet Gain",
+                juce::NormalisableRange<float>(0.f, 1.f, .0001f),
+                1.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                INPUT_GAIN_IDENTIFIER,
+                "Input Gain",
+                juce::NormalisableRange<float>(0.f, 10.f, .0001f, .25f),
+                1.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                INPUT_OFFSET_IDENTIFIER,
+                "Input Offset",
+                juce::NormalisableRange<float>(-2.f, 2.f, .0001f, .25f, true),
+                0.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WARP_THRESHOLD_IDENTIFIER,
+                "Warp Threshold",
+                juce::NormalisableRange<float>(0.f, 1.f, .0001f),
+                1.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WARP_PRE_GAIN_IDENTIFIER,
+                "Warp Pre Gain",
+                juce::NormalisableRange<float>(0.f, 10.f, .0001f),
+                1.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WARP_DESTINATION_IDENTIFIER,
+                "Warp Destination",
+                juce::NormalisableRange<float>(-1.f, 1.f, .0001f),
+                -.25f),
+            std::make_unique<juce::AudioParameterFloat>(
+                WARP_SCALE_IDENTIFIER,
+                "Warp Scale",
+                juce::NormalisableRange<float>(-1.f, 1.f, .0001f),
+                0.f),
+        }
+    },
+    _integral_gain(_value_tree_state.getRawParameterValue(INTEGRATE_IDENTIFIER)),
+    _differential_gain(_value_tree_state.getRawParameterValue(DIFFERENTIATE_IDENTIFIER)),
+    _dc_offset_gain(_value_tree_state.getRawParameterValue(REMOVE_DC_OFFSET_IDENTIFIER)),
+    _invert_warp_gain(_value_tree_state.getRawParameterValue(INVERT_WARP_IDENTIFIER)),
+    _clip_overwarp_gain(_value_tree_state.getRawParameterValue(CLIP_OVERWARP_IDENTIFIER)),
+    _dry_gain(_value_tree_state.getRawParameterValue(DRY_GAIN_IDENTIFIER)),
+    _wet_gain(_value_tree_state.getRawParameterValue(WET_GAIN_IDENTIFIER)),
+    _input_gain(_value_tree_state.getRawParameterValue(INPUT_GAIN_IDENTIFIER)),
+    _input_offset(_value_tree_state.getRawParameterValue(INPUT_OFFSET_IDENTIFIER)),
+    _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_IDENTIFIER)),
+    _warp_pre_gain(_value_tree_state.getRawParameterValue(WARP_PRE_GAIN_IDENTIFIER)),
+    _warp_destination(_value_tree_state.getRawParameterValue(WARP_DESTINATION_IDENTIFIER)),
+    _warp_scale(_value_tree_state.getRawParameterValue(WARP_SCALE_IDENTIFIER))
+{}
+
+IntravenousAudioProcessor::~IntravenousAudioProcessor() {
 }
 
-IntravenousAudioProcessor::~IntravenousAudioProcessor()
-{
-}
-
-//==============================================================================
-const juce::String IntravenousAudioProcessor::getName() const
-{
+const juce::String IntravenousAudioProcessor::getName() const {
     return JucePlugin_Name;
 }
 
-bool IntravenousAudioProcessor::acceptsMidi() const
-{
-   #if JucePlugin_WantsMidiInput
-    return true;
-   #else
-    return false;
-   #endif
+bool IntravenousAudioProcessor::acceptsMidi() const {
+    return JucePlugin_WantsMidiInput;
 }
 
-bool IntravenousAudioProcessor::producesMidi() const
-{
-   #if JucePlugin_ProducesMidiOutput
-    return true;
-   #else
-    return false;
-   #endif
+bool IntravenousAudioProcessor::producesMidi() const {
+    return JucePlugin_ProducesMidiOutput;
 }
 
-bool IntravenousAudioProcessor::isMidiEffect() const
-{
-   #if JucePlugin_IsMidiEffect
-    return true;
-   #else
-    return false;
-   #endif
+bool IntravenousAudioProcessor::isMidiEffect() const {
+    return JucePlugin_IsMidiEffect;
 }
 
-double IntravenousAudioProcessor::getTailLengthSeconds() const
-{
-    return 0.0;
+double IntravenousAudioProcessor::getTailLengthSeconds() const {
+    return 0.;
 }
 
-int IntravenousAudioProcessor::getNumPrograms()
-{
-    return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
-                // so this should be at least 1, even if you're not really implementing programs.
+int IntravenousAudioProcessor::getNumPrograms() {
+    return 1;
 }
 
-int IntravenousAudioProcessor::getCurrentProgram()
-{
+int IntravenousAudioProcessor::getCurrentProgram() {
     return 0;
 }
 
-void IntravenousAudioProcessor::setCurrentProgram (int index)
-{
+void IntravenousAudioProcessor::setCurrentProgram(int index) {
 }
 
-const juce::String IntravenousAudioProcessor::getProgramName (int index)
-{
+const juce::String IntravenousAudioProcessor::getProgramName(int index) {
     return {};
 }
 
-void IntravenousAudioProcessor::changeProgramName (int index, const juce::String& newName)
-{
+void IntravenousAudioProcessor::changeProgramName(int index, const juce::String& new_name) {
 }
 
-//==============================================================================
-void IntravenousAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
-{
-    _integrated_samples.resize(getTotalNumInputChannels(), 0.0);
-    _input_gain = 3; // temp
+void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_per_block) {
+    clearSideEffects();
 }
 
-void IntravenousAudioProcessor::releaseResources()
-{
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
+void IntravenousAudioProcessor::releaseResources() {
+}
 
-    decltype(_integrated_samples) scope_samples;
-    _integrated_samples.swap(scope_samples);
+void IntravenousAudioProcessor::clearSideEffects() {
+    size_t const input_channels = getTotalNumInputChannels();
+    auto const reset_samples = [=](auto& samples) {
+        using Samples = std::remove_reference_t<decltype(samples)>;
+        Samples tmp(input_channels, 0.f);
+        samples.swap(tmp);
+    };
+
+    reset_samples(_last_output);
+    reset_samples(_low_passed_last_output);
+    reset_samples(_last_input);
+    reset_samples(_input_loudness);
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
-bool IntravenousAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
-{
-  #if JucePlugin_IsMidiEffect
-    juce::ignoreUnused (layouts);
-    return true;
-  #else
-    // This is the place where you check if the layout is supported.
-    // In this template code we only support mono or stereo.
-    // Some plugin hosts, such as certain GarageBand versions, will only
-    // load plugins that support stereo bus layouts.
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
+bool IntravenousAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
+    #if JucePlugin_IsMidiEffect
+        juce::ignoreUnused(layouts);
+        return true;
+    #else
+        if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono() &&
+            layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+            return false;
 
-    // This checks if the input layout matches the output layout
-   #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
-        return false;
-   #endif
+        #if ! JucePlugin_IsSynth
+            if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
+                return false;
+        #endif
 
-    return true;
-  #endif
+        return true;
+    #endif
 }
 #endif
 
-void IntravenousAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
-{
-    juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
+float interpolate(float const& min, float const& max, float const& ratio) {
+    return min + (max - min) * ratio;
+}
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
+    juce::ScopedNoDenormals no_denormals;
+    int const channels = getTotalNumInputChannels();
+    jassert(channels == getTotalNumOutputChannels());
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    float* const* const write_buffer = buffer.getArrayOfWritePointers();
+
+    for (int sample_index = 0; sample_index < buffer.getNumSamples(); ++sample_index)
     {
-        auto* channelData = buffer.getWritePointer(channel);
+        float const integral_gain = _integral_gain->load();
+        float const differential_gain = _differential_gain->load();
+        float const dc_offset_gain = _dc_offset_gain->load();
+        float const invert_warp_gain = _invert_warp_gain->load();
+        float const clip_overwarp_gain = _clip_overwarp_gain->load();
+        float const dry_gain = _dry_gain->load();
+        float const wet_gain = _wet_gain->load();
+        float const input_gain = _input_gain->load();
+        float const input_offset = _input_offset->load();
+        float const warp_threshold = _warp_threshold->load();
+        float const warp_pre_gain = _warp_pre_gain->load();
+        float const warp_destination = _warp_destination->load();
+        float const warp_scale = _warp_scale->load();
 
-        for (int sample_index = 0; sample_index < buffer.getNumSamples(); ++sample_index)
+        for (int channel = 0; channel < channels; ++channel)
         {
-            auto const sample = buffer.getSample(channel, sample_index);
+            float const input_sample = write_buffer[channel][sample_index];
 
-            if (sample == 0) _integrated_samples[channel] *= 0.999f;
+            float output_sample = _last_output[channel] * integral_gain;
+            output_sample += (input_sample - _last_input[channel] * differential_gain) * input_gain;
+            output_sample = warp_sample(
+                output_sample + input_offset,
+                warp_threshold,
+                warp_pre_gain,
+                warp_destination,
+                warp_scale,
+                invert_warp_gain,
+                clip_overwarp_gain);
 
-            _integrated_samples[channel] += sample * _input_gain;
+            _last_input[channel] = input_sample;
+            _last_output[channel] = output_sample;
 
-            if (_integrated_samples[channel] > 0)
-                _integrated_samples[channel] = std::fmodf(_integrated_samples[channel] + 1.f, 2) - 1.f;
-            else
-                _integrated_samples[channel] = 1.f - std::fmodf(-_integrated_samples[channel] + 1.f, 2);
-
-            channelData[sample_index] = _integrated_samples[channel];
+            output_sample = remove_dc_offset(output_sample, dc_offset_gain, _low_passed_last_output[channel]);
+            write_buffer[channel][sample_index] = input_sample * dry_gain + output_sample * wet_gain;
         }
     }
 }
 
-//==============================================================================
-bool IntravenousAudioProcessor::hasEditor() const
-{
-    return true; // (change this to false if you choose to not supply an editor)
+void IntravenousAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) {
 }
 
-juce::AudioProcessorEditor* IntravenousAudioProcessor::createEditor()
-{
-    return new IntravenousAudioProcessorEditor (*this);
+float IntravenousAudioProcessor::remove_dc_offset(float const& dry_sample, float const& dc_offset_gain, float& last_low_passed_sample) const {
+    float const cutoff_ratio = std::expf(-20.f / static_cast<float>(getSampleRate()));
+    last_low_passed_sample = interpolate(dry_sample, last_low_passed_sample, cutoff_ratio);
+    return dry_sample - last_low_passed_sample * dc_offset_gain;
 }
 
-//==============================================================================
-void IntravenousAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
-{
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
+float IntravenousAudioProcessor::warp_sample(
+    float const& dry_sample,
+    float const& warp_threshold,
+    float const& warp_pre_gain,
+    float const& warp_destination,
+    float const& warp_scale,
+    float const& invert_warp_gain,
+    float const& clip_overwarp_gain
+) const {
+    if (dry_sample > warp_threshold)
+        return warp_positive_sample(dry_sample, warp_threshold, warp_pre_gain, warp_destination, warp_scale, invert_warp_gain, clip_overwarp_gain);
+    else if (dry_sample < -warp_threshold)
+        return -warp_positive_sample(-dry_sample, warp_threshold, warp_pre_gain, warp_destination, warp_scale, invert_warp_gain, clip_overwarp_gain);
+    else
+        return dry_sample;
 }
 
-void IntravenousAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
-{
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
+float IntravenousAudioProcessor::warp_positive_sample(
+    float const& dry_sample,
+    float const& warp_threshold,
+    float const& warp_pre_gain,
+    float const& warp_destination,
+    float const& warp_scale,
+    float const& invert_warp_gain,
+    float const& clip_overwarp_gain
+) const {
+    float const skewed_sample = (dry_sample - warp_threshold) * warp_pre_gain;
+    float const warped_sample = std::fmodf(skewed_sample, 2.f) * warp_scale + warp_destination;
+    float const sign = 1.f - 2.f * invert_warp_gain;
+    float const unclipped_sample = warped_sample * sign;
+    float const clipped_sample = std::min(warp_threshold, std::max(-warp_threshold, unclipped_sample));
+    return interpolate(unclipped_sample, clipped_sample, clip_overwarp_gain);
+};
+
+bool IntravenousAudioProcessor::hasEditor() const {
+    return true;
 }
 
-//==============================================================================
-// This creates new instances of the plugin..
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
-{
+juce::AudioProcessorEditor* IntravenousAudioProcessor::createEditor() {
+    return new IntravenousAudioProcessorEditor(*this, _value_tree_state);
+}
+
+void IntravenousAudioProcessor::getStateInformation(juce::MemoryBlock& write_buffer) {
+    auto state = _value_tree_state.copyState();
+    std::unique_ptr<juce::XmlElement> xml_state(state.createXml());
+    copyXmlToBinary(*xml_state, write_buffer);
+}
+
+void IntravenousAudioProcessor::setStateInformation(const void* data, int size_in_bytes) {
+    auto xml_state = getXmlFromBinary(data, size_in_bytes);
+    if (xml_state && xml_state->hasTagName(_value_tree_state.state.getType()))
+        _value_tree_state.replaceState(juce::ValueTree::fromXml(*xml_state));
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
     return new IntravenousAudioProcessor();
 }
