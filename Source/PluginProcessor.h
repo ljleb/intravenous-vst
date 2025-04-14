@@ -11,8 +11,10 @@ struct tuple_hash {
 
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
     // [audio channel][note number, midi channel] = sample
-    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _last_outputs;
-    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _low_passed_last_outputs;
+    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _voices;
+    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _low_passed_voices;
+    std::vector<std::queue<float>> _latency_buffers;
+    std::unordered_map<size_t, std::vector<juce::MidiMessage>> _unordered_midi;
 
     juce::AudioProcessorValueTreeState _value_tree_state;
 
@@ -20,7 +22,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::atomic<float>* _warp_threshold;
 
     // [note number, midi channel] = [superposed, velocity]
-    std::unordered_map<std::tuple<int, int>, std::tuple<size_t, unsigned long long>, tuple_hash> _note_velocities;
+    std::unordered_map<std::tuple<int, int>, std::vector<unsigned long long>, tuple_hash> _note_velocities;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 

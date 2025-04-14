@@ -4,6 +4,8 @@
 juce::String const IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER = "remove_dc_offset";
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
 
+constexpr const size_t oversampling_rate = 1;
+
 IntravenousAudioProcessor::IntravenousAudioProcessor():
     #ifndef JucePlugin_PreferredChannelConfigurations
         AudioProcessor(BusesProperties()
@@ -30,7 +32,9 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     },
     _dc_offset_gain(_value_tree_state.getRawParameterValue(REMOVE_DC_OFFSET_IDENTIFIER)),
     _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_IDENTIFIER))
-{}
+{
+    setLatencySamples(1);
+}
 
 IntravenousAudioProcessor::~IntravenousAudioProcessor() {
 }
@@ -88,8 +92,9 @@ void IntravenousAudioProcessor::clearSideEffects() {
         samples.swap(tmp);
     };
 
-    reset_samples(_last_outputs);
-    reset_samples(_low_passed_last_outputs);
+    reset_samples(_voices);
+    reset_samples(_low_passed_voices);
+    reset_samples(_latency_buffers);
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -118,80 +123,95 @@ float interpolate(float const& min, float const& max, float const& ratio) {
 
 void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi_data) {
     juce::ScopedNoDenormals no_denormals;
-    int const channels = getTotalNumOutputChannels();
-
     float* const* const write_buffer = audio.getArrayOfWritePointers();
+    auto const num_samples = audio.getNumSamples();
+    auto const channels = getTotalNumOutputChannels();
+    auto const latency = getLatencySamples();
 
-    std::unordered_map<size_t, std::vector<juce::MidiMessage>> unordered_midi;
-    for (auto const& midi : midi_data) {
+    for (auto const& midi: midi_data) {
         auto const& midi_message = midi.getMessage();
-        unordered_midi[midi_message.getTimeStamp()].emplace_back(midi_message);
+        if ((midi_message.isNoteOn() || midi_message.isNoteOff())) {
+            _unordered_midi[midi_message.getTimeStamp() + latency].emplace_back(midi_message);
+        }
     }
 
-    for (size_t sample_index = 0; sample_index < audio.getNumSamples(); ++sample_index)
+    for (size_t sample_index = 0; sample_index < num_samples + latency; ++sample_index)
     {
-        float const dc_offset_gain = _dc_offset_gain->load();
-        float const warp_threshold = _warp_threshold->load();
-
-        auto const& midi_messages = unordered_midi.find(sample_index);
-        if (midi_messages != unordered_midi.end()) {
+        auto const& midi_messages = _unordered_midi.find(sample_index);
+        if (midi_messages != _unordered_midi.end()) {
             for (auto const& midi_message: midi_messages->second) {
-                auto const& midi_message_idx = [&]() {
-                    return std::tuple { midi_message.getNoteNumber(), midi_message.getChannel() };
-                };
-                if (midi_message.getTimeStamp() == sample_index) {
-                    if (midi_message.isNoteOn()) {
-                        auto& velocity_data = _note_velocities[midi_message_idx()];
-                        std::get<0>(velocity_data) += 1;
-                        std::get<1>(velocity_data) += midi_message.getVelocity();
-                    }
-                    else if (midi_message.isNoteOff()) {
-                        auto& velocity_data = _note_velocities[midi_message_idx()];
-                        auto const& new_count = (std::get<0>(velocity_data) -= 1);
-                        std::get<1>(velocity_data) -= midi_message.getVelocity();
-                        if (new_count == 0) {
-                            _note_velocities.erase(midi_message_idx());
-                            for (auto& last_outputs: _last_outputs) {
-                                last_outputs.erase(midi_message_idx());
-                            }
-                            for (auto& low_passed_last_outputs: _low_passed_last_outputs) {
-                                low_passed_last_outputs.erase(midi_message_idx());
-                            }
+                std::tuple midi_message_idx { midi_message.getNoteNumber(), midi_message.getChannel() };
+                if (midi_message.isNoteOn() && midi_message.getVelocity() > 0) {
+                    _note_velocities[midi_message_idx].push_back(midi_message.getVelocity());
+                }
+                else if (midi_message.isNoteOff() || midi_message.getVelocity() == 0) {
+                    auto& velocities = _note_velocities[midi_message_idx];
+                    velocities.pop_back();
+                    if (velocities.empty()) {
+                        _note_velocities.erase(midi_message_idx);
+                        for (auto& voices: _voices) {
+                            voices.erase(midi_message_idx);
+                        }
+                        for (auto& low_passed_voices: _low_passed_voices) {
+                            low_passed_voices.erase(midi_message_idx);
                         }
                     }
                 }
             }
+            _unordered_midi.erase(midi_messages->first);
         }
 
-        for (size_t channel = 0; channel < channels; ++channel) {
-            float output = 0.f;
+        float const dc_offset_gain = _dc_offset_gain->load();
+        float const warp_threshold = _warp_threshold->load();
 
-            for (auto const& [note_idx, velocity_data]: _note_velocities) {
-                auto const& [note_number, channel] = note_idx;
-                float last_output = _last_outputs[channel][note_idx];
-                last_output = accumulate_step(last_output, warp_threshold, note_number);
-                last_output = warp_sample(last_output, warp_threshold, note_number);
-                _last_outputs[channel][note_idx] = last_output;
-
-                auto const& [count, note_velocity] = velocity_data;
-                output += remove_dc_offset(last_output, dc_offset_gain, _low_passed_last_outputs[channel][note_idx]) * (note_velocity / 127.f);
+        if (sample_index < latency) {
+            for (size_t channel = 0; channel < channels; ++channel) {
+                auto& latency_buffer = _latency_buffers[channel];
+                if (latency_buffer.empty()) {
+                    write_buffer[channel][sample_index] = 0;
+                }
+                else {
+                    write_buffer[channel][sample_index] = latency_buffer.front();
+                    latency_buffer.pop();
+                }
             }
+        }
+        else {
+            for (size_t channel = 0; channel < channels; ++channel) {
+                float output = 0.f;
+                for (size_t oversampling_i = 0; oversampling_i < oversampling_rate; ++oversampling_i) {
+                    for (auto const& [note_idx, velocities]: _note_velocities) {
+                        auto const& [note_number, channel] = note_idx;
+                        float voice = _voices[channel][note_idx];
+                        voice = accumulate_step(voice, warp_threshold, note_number);
+                        voice = warp_sample(voice, warp_threshold, note_number);
+                        _voices[channel][note_idx] = voice;
 
-            write_buffer[channel][sample_index] = output;
+                        auto const& note_velocity = velocities.back();
+                        output += remove_dc_offset(voice, dc_offset_gain, _low_passed_voices[channel][note_idx]) * (note_velocity / 127.f);
+                    }
+                }
+                if (sample_index < num_samples) {
+                    write_buffer[channel][sample_index] = output / oversampling_rate;
+                }
+                else {
+                    _latency_buffers[channel].push(output / oversampling_rate);
+                }
+            }
         }
     }
 }
 
 float IntravenousAudioProcessor::accumulate_step(float const& sample, float const& threshold, int const& note_number) const {
     auto const& frequency = juce::MidiMessage::getMidiNoteInHertz(note_number);
-    return sample + 2.f * threshold * float(frequency / getSampleRate());
+    return sample + 2.f * threshold * float(frequency / (getSampleRate() * oversampling_rate));
 }
 
 void IntravenousAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) {
 }
 
 float IntravenousAudioProcessor::remove_dc_offset(float const& dry_sample, float const& dc_offset_gain, float& last_low_passed_sample) const {
-    float const cutoff_ratio = std::expf(-20.f / static_cast<float>(getSampleRate()));
+    float const cutoff_ratio = std::expf(-20.f / static_cast<float>(getSampleRate() * oversampling_rate));
     last_low_passed_sample = interpolate(dry_sample, last_low_passed_sample, cutoff_ratio);
     return dry_sample - last_low_passed_sample * dc_offset_gain;
 }
@@ -214,11 +234,10 @@ float IntravenousAudioProcessor::warp_positive_sample(
     float const& warp_threshold,
     int const& note_number
 ) const {
-    float const skewed_sample = dry_sample - warp_threshold;
-    float const warped_sample = std::fmodf(skewed_sample, 2.f*warp_threshold) - warp_threshold;
-    float const clipped_sample = std::min(std::max(warped_sample , -warp_threshold), warp_threshold);
-    return clipped_sample;
-};
+    //float const warped_sample = std::fmodf(dry_sample - warp_threshold, 2.f*warp_threshold) - warp_threshold;
+    //float const clipped_sample = std::min(std::max(warped_sample, -warp_threshold), warp_threshold);
+    return dry_sample - 2.f*warp_threshold;
+}
 
 bool IntravenousAudioProcessor::hasEditor() const {
     return true;
