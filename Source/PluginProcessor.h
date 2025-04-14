@@ -1,45 +1,32 @@
 #pragma once
 #include <JuceHeader.h>
 
-class IntravenousAudioProcessor final: public juce::AudioProcessor {
-    std::vector<float> _last_output;
-    std::vector<float> _low_passed_last_output;
-    std::vector<float> _last_input;
+struct tuple_hash {
+    template <typename T1, typename T2>
+    size_t operator()(const std::tuple<T1, T2>& x) const
+    {
+        return std::get<0>(x) ^ std::get<1>(x);
+    }
+};
 
-    std::vector<float> _input_loudness;
+class IntravenousAudioProcessor final: public juce::AudioProcessor {
+    // [audio channel][note number, midi channel] = sample
+    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _last_outputs;
+    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _low_passed_last_outputs;
 
     juce::AudioProcessorValueTreeState _value_tree_state;
 
-    std::atomic<float>* _integral_gain;
-    std::atomic<float>* _differential_gain;
     std::atomic<float>* _dc_offset_gain;
-    std::atomic<float>* _invert_warp_gain;
-    std::atomic<float>* _clip_overwarp_gain;
-    std::atomic<float>* _dry_gain;
-    std::atomic<float>* _wet_gain;
-    std::atomic<float>* _input_gain;
-    std::atomic<float>* _input_offset;
     std::atomic<float>* _warp_threshold;
-    std::atomic<float>* _warp_pre_gain;
-    std::atomic<float>* _warp_destination;
-    std::atomic<float>* _warp_scale;
+
+    // [note number, midi channel] = [superposed, velocity]
+    std::unordered_map<std::tuple<int, int>, std::tuple<size_t, unsigned long long>, tuple_hash> _note_velocities;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
 public:
-    static juce::String const INTEGRATE_IDENTIFIER;
-    static juce::String const DIFFERENTIATE_IDENTIFIER;
     static juce::String const REMOVE_DC_OFFSET_IDENTIFIER;
-    static juce::String const CLIP_OVERWARP_IDENTIFIER;
-    static juce::String const INVERT_WARP_IDENTIFIER;
-    static juce::String const DRY_GAIN_IDENTIFIER;
-    static juce::String const WET_GAIN_IDENTIFIER;
-    static juce::String const INPUT_GAIN_IDENTIFIER;
-    static juce::String const INPUT_OFFSET_IDENTIFIER;
     static juce::String const WARP_THRESHOLD_IDENTIFIER;
-    static juce::String const WARP_PRE_GAIN_IDENTIFIER;
-    static juce::String const WARP_DESTINATION_IDENTIFIER;
-    static juce::String const WARP_SCALE_IDENTIFIER;
 
     IntravenousAudioProcessor();
     ~IntravenousAudioProcessor() override;
@@ -57,8 +44,9 @@ public:
 
 private:
     float remove_dc_offset(float const&, float const&, float&) const;
-    float warp_sample(float const&, float const&, float const&, float const&, float const&, float const&, float const&) const;
-    float warp_positive_sample(float const&, float const&, float const&, float const&, float const&, float const&, float const&) const;
+    float warp_sample(float const&, float const&, int const&) const;
+    float warp_positive_sample(float const&, float const&, int const&) const;
+    float accumulate_step(float const&, float const&, int const&) const;
 
 public:
     juce::AudioProcessorEditor* createEditor() override;

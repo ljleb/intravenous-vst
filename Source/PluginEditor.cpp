@@ -6,14 +6,7 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     _audio_processor(audio_processor)
 {
     for (auto const& parameter_identifier: {
-        IntravenousAudioProcessor::INPUT_GAIN_IDENTIFIER,
-        IntravenousAudioProcessor::INPUT_OFFSET_IDENTIFIER,
         IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER,
-        IntravenousAudioProcessor::WARP_PRE_GAIN_IDENTIFIER,
-        IntravenousAudioProcessor::WARP_DESTINATION_IDENTIFIER,
-        IntravenousAudioProcessor::WARP_SCALE_IDENTIFIER,
-        IntravenousAudioProcessor::DRY_GAIN_IDENTIFIER,
-        IntravenousAudioProcessor::WET_GAIN_IDENTIFIER,
     }) {
         _slider_packs.emplace_back(
             std::make_unique<SliderPack>(
@@ -24,11 +17,7 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     }
 
     for (auto const& parameter_identifier: {
-        IntravenousAudioProcessor::DIFFERENTIATE_IDENTIFIER,
-        IntravenousAudioProcessor::INTEGRATE_IDENTIFIER,
         IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER,
-        IntravenousAudioProcessor::INVERT_WARP_IDENTIFIER,
-        IntravenousAudioProcessor::CLIP_OVERWARP_IDENTIFIER,
     }) {
         _button_packs.emplace_back(
             std::make_unique<ButtonPack>(
