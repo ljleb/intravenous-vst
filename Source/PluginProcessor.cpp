@@ -2,7 +2,7 @@
 #include "PluginEditor.h"
 
 juce::String const IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER = "remove_dc_offset";
-juce::String const IntravenousAudioProcessor::WRAP_THRESHOLD_IDENTIFIER = "warp_threshold";
+juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
 
 IntravenousAudioProcessor::IntravenousAudioProcessor():
     #ifndef JucePlugin_PreferredChannelConfigurations
@@ -22,14 +22,14 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 "Remove DC Offset",
                 true),
             std::make_unique<juce::AudioParameterFloat>(
-                WRAP_THRESHOLD_IDENTIFIER,
+                WARP_THRESHOLD_IDENTIFIER,
                 "Warp Threshold",
                 juce::NormalisableRange<float>(0.f, 1.f, .0001f),
                 1.f),
         }
     },
     _dc_offset_gain(_value_tree_state.getRawParameterValue(REMOVE_DC_OFFSET_IDENTIFIER)),
-    _wrap_threshold(_value_tree_state.getRawParameterValue(WRAP_THRESHOLD_IDENTIFIER))
+    _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_IDENTIFIER))
 {
     setLatencySamples(1);
     _unordered_midi[1000] = {
@@ -122,19 +122,19 @@ float interpolate(float const& min, float const& max, float const& ratio) {
     return min + (max - min) * ratio;
 }
 
-float get_phi(float const& sample, float const& wrap_threshold) {
-    return (sample / wrap_threshold + 1.f) / 2.f;
+float polyblep_phi(float const& sample, float const& warp_threshold) {
+    return (sample / warp_threshold + 1.f) / 2.f;
 }
 
-float wrap_correction_p(float const& phi, float const& delta, float const& wrap_threshold, bool pre_clip) {
+float polyblep_p(float const& phi, float const& delta, float const& warp_threshold, bool pre_clip) {
     if (!pre_clip && phi < delta) {
         auto const& first_order = 2.f * phi / delta;
         auto const& second_order = phi / delta;
-        return (first_order - second_order*second_order - 1) * wrap_threshold;
+        return (first_order - second_order*second_order - 1) * warp_threshold;
     }
     if (pre_clip && 1 - delta <= phi) {
         auto const& second_order = (phi - 1) / delta + 1;
-        return second_order*second_order * wrap_threshold;
+        return second_order*second_order * warp_threshold;
     }
     return 0;
 }
@@ -179,7 +179,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
         }
 
         float const dc_offset_gain = _dc_offset_gain->load();
-        float const wrap_threshold = _wrap_threshold->load();
+        float const warp_threshold = _warp_threshold->load();
 
         if (sample_index < latency) {
             for (size_t channel = 0; channel < channels; ++channel) {
@@ -200,22 +200,20 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
                 for (auto const& [note_idx, velocities]: _note_velocities) {
                     auto const& [note_number, midi_channel] = note_idx;
                     float& voice = _voices[channel][note_idx];
-                    float const voice_accumulated = accumulate_step(voice, wrap_threshold, note_number);
-                    auto const [did_wrap, voice_wrapped] = wrap_sample(voice_accumulated, wrap_threshold, note_number);
+                    float const voice_accumulated = accumulate_step(voice, warp_threshold, note_number);
+                    auto const [did_warp, voice_warpped] = warp_sample(voice_accumulated, warp_threshold, note_number);
 
-                    float const delta = voice_accumulated - voice;
-                    float const phi_0 = get_phi(voice, wrap_threshold);
-                    float const phi_1 = get_phi(voice_wrapped, wrap_threshold);
+                    float const delta = (voice_accumulated - voice) / (2.f * warp_threshold);
+                    float const phi_prev = polyblep_phi(voice, warp_threshold);
+                    float const phi_next = polyblep_phi(voice_warpped, warp_threshold);
 
                     auto const& note_gain = velocities.back() / 127.f;
-                    voice = voice_wrapped;
-                    output += voice_wrapped * note_gain;
+                    voice = voice_warpped;
+                    output += voice_warpped * note_gain;
 
-                    if (did_wrap) {
-                        auto corr = wrap_correction_p(phi_0, delta, wrap_threshold, true) * note_gain;
-                        auto out = wrap_correction_p(phi_1, delta, wrap_threshold, false) * note_gain;
-                        correction -= corr;
-                        output -= out;
+                    if (did_warp) {
+                        correction -= polyblep_p(phi_prev, delta, warp_threshold, true) * note_gain;
+                        output -= polyblep_p(phi_next, delta, warp_threshold, false) * note_gain;
                     }
                     //output += remove_dc_offset(voice_antialiased, dc_offset_gain, _low_passed_voices[channel][note_idx]);
                 }
@@ -234,33 +232,33 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
 void IntravenousAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) {
 }
 
-float IntravenousAudioProcessor::accumulate_step(float const& sample, float const& threshold, int const& note_number) const {
+float IntravenousAudioProcessor::accumulate_step(float const& sample, float const& warp_threshold, int const& note_number) const {
     auto const& frequency = juce::MidiMessage::getMidiNoteInHertz(note_number);
-    return sample + 2.f * threshold * float(frequency / getSampleRate());
+    return sample + 2.f * warp_threshold * float(frequency / getSampleRate());
 }
 
-std::tuple<bool, float> IntravenousAudioProcessor::wrap_sample(
+std::tuple<bool, float> IntravenousAudioProcessor::warp_sample(
     float dry_sample,
     float const& warp_threshold,
     int const& note_number
 ) const {
     if (dry_sample > warp_threshold) {
-        return { true, wrap_positive_sample(dry_sample, warp_threshold) };
+        return { true, warp_positive_sample(dry_sample, warp_threshold) };
     }
     else if (dry_sample < -warp_threshold) {
-        return { true, -wrap_positive_sample(-dry_sample, warp_threshold) };
+        return { true, -warp_positive_sample(-dry_sample, warp_threshold) };
     }
     else {
         return { false, dry_sample };
     }
 }
 
-float IntravenousAudioProcessor::wrap_positive_sample(
+float IntravenousAudioProcessor::warp_positive_sample(
     float const& dry_sample,
-    float const& wrap_threshold
+    float const& warp_threshold
 ) const {
-    float const warped_sample = std::fmodf(dry_sample - wrap_threshold, 2.f* wrap_threshold) - wrap_threshold;
-    float const clipped_sample = std::min(std::max(warped_sample, -wrap_threshold), wrap_threshold);
+    float const warped_sample = std::fmodf(dry_sample - warp_threshold, 2.f* warp_threshold) - warp_threshold;
+    float const clipped_sample = std::min(std::max(warped_sample, -warp_threshold), warp_threshold);
     return clipped_sample;
 }
 

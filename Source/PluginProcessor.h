@@ -19,7 +19,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     juce::AudioProcessorValueTreeState _value_tree_state;
 
     std::atomic<float>* _dc_offset_gain;
-    std::atomic<float>* _wrap_threshold;
+    std::atomic<float>* _warp_threshold;
 
     // [note number, midi channel] = [superposed, velocity]
     std::unordered_map<std::tuple<int, int>, std::vector<unsigned long long>, tuple_hash> _note_velocities;
@@ -28,7 +28,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
 
 public:
     static juce::String const REMOVE_DC_OFFSET_IDENTIFIER;
-    static juce::String const WRAP_THRESHOLD_IDENTIFIER;
+    static juce::String const WARP_THRESHOLD_IDENTIFIER;
 
     IntravenousAudioProcessor();
     ~IntravenousAudioProcessor() override;
@@ -46,8 +46,8 @@ public:
 
 private:
     float accumulate_step(float const&, float const&, int const&) const;
-    std::tuple<bool, float> wrap_sample(float, float const&, int const&) const;
-    float wrap_positive_sample(float const&, float const&) const;
+    std::tuple<bool, float> warp_sample(float, float const&, int const&) const;
+    float warp_positive_sample(float const&, float const&) const;
     float remove_dc_offset(float const&, float const&, float&) const;
 
 public:
