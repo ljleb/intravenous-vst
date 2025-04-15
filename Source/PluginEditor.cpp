@@ -16,16 +16,15 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
                 static_cast<unsigned int>(_slider_packs.size())));
     }
 
-    for (auto const& parameter_identifier: {
-        IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER,
-    }) {
-        _button_packs.emplace_back(
-            std::make_unique<ButtonPack>(
-                *this,
-                value_tree_state,
-                parameter_identifier,
-                static_cast<unsigned int>(_button_packs.size())));
-    }
+    //for (auto const& parameter_identifier: {
+    //}) {
+    //    _button_packs.emplace_back(
+    //        std::make_unique<ButtonPack>(
+    //            *this,
+    //            value_tree_state,
+    //            parameter_identifier,
+    //            static_cast<unsigned int>(_button_packs.size())));
+    //}
 
     setResizable(false, false);
     setSize(static_cast<unsigned int>((_slider_packs.size() + 1) * 100), 140);

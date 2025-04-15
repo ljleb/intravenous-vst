@@ -12,13 +12,11 @@ struct tuple_hash {
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
     // [audio channel][note number, midi channel] = sample
     std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _voices;
-    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _low_passed_voices;
     std::vector<std::queue<float>> _latency_buffers;
     std::unordered_map<size_t, std::vector<juce::MidiMessage>> _unordered_midi;
 
     juce::AudioProcessorValueTreeState _value_tree_state;
 
-    std::atomic<float>* _dc_offset_gain;
     std::atomic<float>* _warp_threshold;
 
     // [note number, midi channel] = [superposed, velocity]
@@ -27,7 +25,6 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
 public:
-    static juce::String const REMOVE_DC_OFFSET_IDENTIFIER;
     static juce::String const WARP_THRESHOLD_IDENTIFIER;
 
     IntravenousAudioProcessor();
@@ -45,8 +42,8 @@ public:
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
 private:
-    float accumulate_step(float const&, float const&, int const&) const;
-    std::tuple<bool, float> warp_sample(float, float const&, int const&) const;
+    float accumulate_step(float const&, float const&, float const&) const;
+    std::tuple<bool, float> warp_sample(float, float const&) const;
     float warp_positive_sample(float const&, float const&) const;
     float remove_dc_offset(float const&, float const&, float&) const;
 

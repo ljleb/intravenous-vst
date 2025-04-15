@@ -1,7 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-juce::String const IntravenousAudioProcessor::REMOVE_DC_OFFSET_IDENTIFIER = "remove_dc_offset";
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
 
 IntravenousAudioProcessor::IntravenousAudioProcessor():
@@ -17,10 +16,6 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     #endif
     _value_tree_state {
         *this, nullptr, "PARAMETERS", {
-            std::make_unique<juce::AudioParameterBool>(
-                REMOVE_DC_OFFSET_IDENTIFIER,
-                "Remove DC Offset",
-                true),
             std::make_unique<juce::AudioParameterFloat>(
                 WARP_THRESHOLD_IDENTIFIER,
                 "Warp Threshold",
@@ -28,7 +23,6 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 1.f),
         }
     },
-    _dc_offset_gain(_value_tree_state.getRawParameterValue(REMOVE_DC_OFFSET_IDENTIFIER)),
     _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_IDENTIFIER))
 {
     setLatencySamples(1);
@@ -94,7 +88,6 @@ void IntravenousAudioProcessor::clearSideEffects() {
     };
 
     reset_samples(_voices);
-    reset_samples(_low_passed_voices);
     reset_samples(_latency_buffers);
 }
 
@@ -122,21 +115,34 @@ float interpolate(float const& min, float const& max, float const& ratio) {
     return min + (max - min) * ratio;
 }
 
+enum struct PolyblepSide {
+    LEFT,
+    RIGHT,
+};
+
 float polyblep_phi(float const& sample, float const& warp_threshold) {
-    return (sample / warp_threshold + 1.f) / 2.f;
+    auto const res = (sample / warp_threshold + 1.f) / 2.f;
+    if (!std::isfinite(res)) return 0.5;
+    return res;
 }
 
-float polyblep_p(float const& phi, float const& delta, float const& warp_threshold, bool pre_clip) {
-    if (!pre_clip && phi < delta) {
+float polyblep_p(float const& phi, float const& delta, PolyblepSide side) {
+    if (side == PolyblepSide::RIGHT && phi < delta) {
         auto const& first_order = 2.f * phi / delta;
         auto const& second_order = phi / delta;
-        return (first_order - second_order*second_order - 1) * warp_threshold;
+        return first_order - second_order*second_order - 1;
     }
-    if (pre_clip && 1 - delta <= phi) {
+    if (side == PolyblepSide::LEFT && 1 - delta <= phi) {
         auto const& second_order = (phi - 1) / delta + 1;
-        return second_order*second_order * warp_threshold;
+        return second_order*second_order;
     }
     return 0;
+}
+
+float polyblep_error(float const& sample, float const& delta, float const& warp_threshold, PolyblepSide side) {
+    float const phi = polyblep_phi(sample, warp_threshold);
+    float const p = polyblep_p(phi, delta, side) * warp_threshold;
+    return p;
 }
 
 void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi_data) {
@@ -169,16 +175,12 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
                         for (auto& voices: _voices) {
                             voices.erase(midi_message_idx);
                         }
-                        for (auto& low_passed_voices: _low_passed_voices) {
-                            low_passed_voices.erase(midi_message_idx);
-                        }
                     }
                 }
             }
             _unordered_midi.erase(midi_messages->first);
         }
 
-        float const dc_offset_gain = _dc_offset_gain->load();
         float const warp_threshold = _warp_threshold->load();
 
         if (sample_index < latency) {
@@ -200,22 +202,21 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
                 for (auto const& [note_idx, velocities]: _note_velocities) {
                     auto const& [note_number, midi_channel] = note_idx;
                     float& voice = _voices[channel][note_idx];
-                    float const voice_accumulated = accumulate_step(voice, warp_threshold, note_number);
-                    auto const [did_warp, voice_warpped] = warp_sample(voice_accumulated, warp_threshold, note_number);
+                    auto const frequency = juce::MidiMessage::getMidiNoteInHertz(note_number);
+                    float const delta = float(2.0 * frequency / getSampleRate());
 
-                    float const delta = (voice_accumulated - voice) / (2.f * warp_threshold);
-                    float const phi_prev = polyblep_phi(voice, warp_threshold);
-                    float const phi_next = polyblep_phi(voice_warpped, warp_threshold);
+                    float const voice_accumulated = accumulate_step(voice, warp_threshold, delta);
+                    auto const [did_warp, voice_warpped] = warp_sample(voice_accumulated, warp_threshold);
 
                     auto const& note_gain = velocities.back() / 127.f;
-                    voice = voice_warpped;
-                    output += voice_warpped * note_gain;
 
                     if (did_warp) {
-                        correction -= polyblep_p(phi_prev, delta, warp_threshold, true) * note_gain;
-                        output -= polyblep_p(phi_next, delta, warp_threshold, false) * note_gain;
+                        correction -= polyblep_error(voice, delta, warp_threshold, PolyblepSide::LEFT) * note_gain;
+                        output -= polyblep_error(voice_warpped, delta, warp_threshold, PolyblepSide::RIGHT) * note_gain;
                     }
-                    //output += remove_dc_offset(voice_antialiased, dc_offset_gain, _low_passed_voices[channel][note_idx]);
+
+                    voice = voice_warpped;
+                    output += voice_warpped * note_gain;
                 }
                 write_buffer[channel][sample_index - 1] += correction;
                 if (sample_index < num_samples) {
@@ -232,15 +233,13 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
 void IntravenousAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) {
 }
 
-float IntravenousAudioProcessor::accumulate_step(float const& sample, float const& warp_threshold, int const& note_number) const {
-    auto const& frequency = juce::MidiMessage::getMidiNoteInHertz(note_number);
-    return sample + 2.f * warp_threshold * float(frequency / getSampleRate());
+float IntravenousAudioProcessor::accumulate_step(float const& sample, float const& warp_threshold, float const& delta) const {
+    return sample + 2.f * warp_threshold * delta;
 }
 
 std::tuple<bool, float> IntravenousAudioProcessor::warp_sample(
     float dry_sample,
-    float const& warp_threshold,
-    int const& note_number
+    float const& warp_threshold
 ) const {
     if (dry_sample > warp_threshold) {
         return { true, warp_positive_sample(dry_sample, warp_threshold) };
@@ -257,7 +256,7 @@ float IntravenousAudioProcessor::warp_positive_sample(
     float const& dry_sample,
     float const& warp_threshold
 ) const {
-    float const warped_sample = std::fmodf(dry_sample - warp_threshold, 2.f* warp_threshold) - warp_threshold;
+    float const warped_sample = std::fmodf(dry_sample - warp_threshold, 2.f*warp_threshold) - warp_threshold;
     float const clipped_sample = std::min(std::max(warped_sample, -warp_threshold), warp_threshold);
     return clipped_sample;
 }
