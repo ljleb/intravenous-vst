@@ -111,10 +111,6 @@ bool IntravenousAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
 }
 #endif
 
-float interpolate(float const& min, float const& max, float const& ratio) {
-    return min + (max - min) * ratio;
-}
-
 enum struct PolyblepSide {
     LEFT,
     RIGHT,
@@ -142,6 +138,7 @@ float polyblep_p(float const& phi, float const& delta, PolyblepSide side) {
 float polyblep_error(float const& sample, float const& delta, float const& warp_threshold, PolyblepSide side) {
     float const phi = polyblep_phi(sample, warp_threshold);
     float const p = polyblep_p(phi, delta, side) * warp_threshold;
+    if (!std::isfinite(p)) return 0.f;
     return p;
 }
 
@@ -259,12 +256,6 @@ float IntravenousAudioProcessor::warp_positive_sample(
     float const warped_sample = std::fmodf(dry_sample - warp_threshold, 2.f*warp_threshold) - warp_threshold;
     float const clipped_sample = std::min(std::max(warped_sample, -warp_threshold), warp_threshold);
     return clipped_sample;
-}
-
-float IntravenousAudioProcessor::remove_dc_offset(float const& dry_sample, float const& dc_offset_gain, float& last_low_passed_sample) const {
-    float const cutoff_ratio = std::expf(-20.f / static_cast<float>(getSampleRate()));
-    last_low_passed_sample = interpolate(dry_sample, last_low_passed_sample, cutoff_ratio);
-    return dry_sample - last_low_passed_sample * dc_offset_gain;
 }
 
 bool IntravenousAudioProcessor::hasEditor() const {
