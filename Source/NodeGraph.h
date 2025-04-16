@@ -49,8 +49,24 @@ namespace iv {
 
     /* ─────────────  Ports  ───────────── */
     struct InputPort {
-        std::vector<Sample> _buffer{0.0};
+        std::vector<Sample> _buffer;
         size_t _write_idx{0};
+
+        InputPort() noexcept {
+            _buffer.push_back(0);
+        }
+
+        InputPort(InputPort const&) = delete;
+        InputPort(InputPort&& other) noexcept {
+            *this = std::move(other);
+        }
+
+        InputPort& operator=(InputPort const&) = delete;
+        InputPort& operator=(InputPort&& other) noexcept {
+            _buffer = std::move(other._buffer);
+            _write_idx = other._write_idx;
+            return *this;
+        }
 
         Sample next() noexcept {
             _write_idx = (_write_idx + 1) % _buffer.size();
@@ -144,7 +160,7 @@ namespace iv {
         std::vector<InputPort> ins;
         OutputPort out;
 
-        SumNode(std::vector<InputPort>&& ins): ins(ins) {}
+        SumNode(std::vector<InputPort>&& ins): ins(std::move(ins)) {}
 
         void tick(std::span<juce::MidiMessage> const& midi) noexcept override {
             Sample result = 0;
@@ -209,7 +225,7 @@ namespace iv {
             decltype(outs) outs = {}
         ):
             _nodes(std::move(nodes)),
-            ins(ins),
+            ins(std::move(ins)),
             outs(outs)
         {
             topological_sort_with_cycles();
@@ -352,7 +368,7 @@ namespace iv {
 
     template<>
     struct NodeFactory<SumNode> : public NodeFactoryBase {
-        size_t num_inputs;
+        size_t num_inputs{0};
 
         std::unique_ptr<Node> create() const override
         {
@@ -374,15 +390,15 @@ namespace iv {
 
         std::vector<std::unique_ptr<NodeFactoryBase>> factories;
         std::vector<Edge> edges;
-        size_t num_inputs, num_outputs;
+        size_t num_inputs{0}, num_outputs{0};
 
         std::unique_ptr<Node> create() const override
         {
             std::vector<std::unique_ptr<Node>> nodes;
             std::unordered_set<InputPort const*> seen_inputs;
 
-            auto graph_inputs = std::vector<InputPort>(num_inputs);
-            auto graph_outputs = std::vector<OutputPort>(num_outputs);
+            std::vector<InputPort> graph_inputs(num_inputs);
+            std::vector<OutputPort> graph_outputs(num_outputs);
 
             for (auto& factory : factories) {
                 nodes.emplace_back(factory->create());
@@ -411,9 +427,11 @@ namespace iv {
         }
 
         template<class T>
-        size_t add_node() {
-            factories.emplace_back(std::make_unique<NodeFactory<T>>());
-            return factories.size() - 1;
+        auto add_node() {
+            auto node_ptr = std::make_unique<NodeFactory<T>>();
+            auto node_ref = node_ptr.get();
+            factories.emplace_back(std::move(node_ptr));
+            return std::make_tuple(node_ref, factories.size() - 1);
         }
 
         size_t add_input_port() noexcept {
@@ -429,3 +447,73 @@ namespace iv {
         }
     };
 }
+
+#if JUCE_DEBUG
+
+static int test1 = []() -> int {
+    iv::InputPort in;
+    iv::OutputPort out;
+
+    out.fan.emplace_back(&in);
+    in.add_latency(out.latency());
+
+    iv::Sample expected = 3.0;
+    out.push(expected);
+    auto actual = in.next();
+    jassert(actual == expected);
+    return 0;
+}();
+
+static int test2 = []() -> int {
+    iv::InputPort in;
+    iv::OutputPort out{1};
+
+    out.fan.emplace_back(&in);
+    in.add_latency(out.latency());
+
+    iv::Sample expected = 3.0;
+    out.push(expected);
+    in.next();
+    auto actual = in.next();
+    jassert(actual == expected);
+    return 0;
+}();
+
+static int test3 = []() -> int {
+    iv::InputPort in;
+    iv::OutputPort out{1};
+
+    out.fan.emplace_back(&in);
+    in.add_latency(out.latency());
+
+    iv::Sample expected = 3.0;
+    out.push(expected);
+    auto actual = out.back();
+    jassert(actual == expected);
+    return 0;
+}();
+
+static int test_integration1 = []() -> int {
+    iv::NodeFactory<iv::Graph> factory;
+    auto [sum, sum_id] = factory.add_node<iv::SumNode>();
+    auto p1 = sum->add_input_port();
+    auto p2 = sum->add_input_port();
+    auto in1 = factory.add_input_port();
+    auto out1 = factory.add_output_port();
+    auto out2 = factory.add_output_port();
+
+    factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out1 }, { sum_id, p1 });
+    factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out2 }, { sum_id, p2 });
+    factory.connect({ sum_id, 0 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in1 });
+
+    auto graph = factory.create();
+    graph->outputs()[0].update(0, 1.5);
+    graph->outputs()[1].update(0, 2.5);
+    graph->tick({});
+    auto actual = graph->inputs()[0].next();
+
+    jassert(actual == 4);
+    return 0;
+}();
+
+#endif
