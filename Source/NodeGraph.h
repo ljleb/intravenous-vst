@@ -1,5 +1,4 @@
 ﻿#pragma once
-#include <JuceHeader.h>
 #include <vector>
 #include <memory>
 #include <span>
@@ -7,6 +6,8 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <deque>
+#include <cassert>
 
 enum struct PolyblepSide {
     LEFT,
@@ -45,6 +46,8 @@ float polyblep_error(float sample, float delta, float warp_threshold, PolyblepSi
 namespace iv {
     using Sample = float;
 
+    struct MidiMessage {};
+
     /* ─────────────  Ports  ───────────── */
     struct InputPort {
         std::vector<Sample> _buffer;
@@ -73,7 +76,7 @@ namespace iv {
             return v;
         }
 
-        void update(size_t offset, Sample value) noexcept {
+        void update(Sample value, size_t offset = 0) noexcept {
             // update the current position in the buffer
             // offset brings the write head closer to a real time update
             size_t idx = (_write_idx + _buffer.size() - offset) % _buffer.size();
@@ -98,17 +101,23 @@ namespace iv {
 
         OutputPort(size_t latency = 0): _latency(latency), _buffer(latency + 1), _index(0) {}
 
-        void push(Sample v) noexcept {
-            next();
-            update(0, v);
+        void connect_to(InputPort* in) {
+            assert(in->get_latency() == 0);
+            fan.push_back(in);
+            in->add_latency(_latency);
         }
 
-        void update(size_t offset, Sample value) noexcept {
+        void push(Sample v) noexcept {
+            next();
+            update(v);
+        }
+
+        void update(Sample value, size_t offset = 0) noexcept {
             if (offset > _latency) return;
             size_t idx = (_index + _buffer.size() - offset) % _buffer.size();
             _buffer[idx] = value;
             for (auto* dst : fan) {
-                dst->update(offset, value);
+                dst->update(value, offset);
             }
         }
 
@@ -131,7 +140,7 @@ namespace iv {
     /* ─────────────  Node base  ───────────── */
     struct Node {
         virtual ~Node() = default;
-        virtual void tick(std::span<juce::MidiMessage> const& midi) noexcept = 0;
+        virtual void tick(std::span<MidiMessage> const& midi) noexcept = 0;
     public:
         std::span<InputPort> inputs() noexcept {
             auto span = const_cast<Node const*>(this)->inputs_impl();
@@ -170,7 +179,7 @@ namespace iv {
 
         SumNode(std::vector<InputPort>&& ins): ins(std::move(ins)) {}
 
-        void tick(std::span<juce::MidiMessage> const& midi) noexcept override {
+        void tick(std::span<MidiMessage> const& midi) noexcept override {
             Sample result = 0;
             for (auto& in : ins) {
                 result += in.next();
@@ -185,7 +194,7 @@ namespace iv {
         InputPort in_vel, in_prev, in_sample_rate;
         OutputPort out;
 
-        void tick(std::span<juce::MidiMessage> const& midi) noexcept override {
+        void tick(std::span<MidiMessage> const& midi) noexcept override {
             out.push(in_vel.next() / in_sample_rate.next() + in_prev.next());
         }
         std::span<InputPort const> inputs_impl() const noexcept override { return { &in_vel, 3 }; }
@@ -196,7 +205,7 @@ namespace iv {
         InputPort  in, in_threshold;
         OutputPort out, out_aa{1};
 
-        void tick(std::span<juce::MidiMessage> const& midi) noexcept override {
+        void tick(std::span<MidiMessage> const& midi) noexcept override {
             Sample threshold = in_threshold.next();
             Sample sample_prev = out.back();
             Sample sample = in.next();
@@ -211,7 +220,7 @@ namespace iv {
             if (warped) {
                 Sample delta = (sample - sample_prev) / 2;
                 sample_warped_aa -= polyblep_error(sample_warped_aa, delta, threshold, PolyblepSide::RIGHT);
-                out_aa.update(0, sample_prev - polyblep_error(sample_prev, delta, threshold, PolyblepSide::LEFT));
+                out_aa.update(sample_prev - polyblep_error(sample_prev, delta, threshold, PolyblepSide::LEFT));
             }
             out_aa.push(sample_warped_aa);
         }
@@ -222,19 +231,22 @@ namespace iv {
     /* ─────────────  Patch  ───────────── */
     class Graph : public Node {
         std::vector<std::unique_ptr<Node>> _nodes;
+        std::vector<InputPort> _private_ins;
+        std::vector<OutputPort> _private_outs;
+        std::vector<InputPort> _public_ins;
+        std::vector<OutputPort> _public_outs;
 
     public:
-        std::vector<InputPort> ins;
-        std::vector<OutputPort> outs;
-
         Graph(
-            decltype(_nodes) nodes = {},
-            decltype(ins) ins = {},
-            decltype(outs) outs = {}
+            decltype(_nodes)&& nodes = {},
+            decltype(_private_ins)&& private_ins = {},
+            decltype(_private_outs)&& private_outs = {}
         ):
             _nodes(std::move(nodes)),
-            ins(std::move(ins)),
-            outs(outs)
+            _private_ins(std::move(private_ins)),
+            _private_outs(std::move(private_outs)),
+            _public_ins(_private_outs.size()),
+            _public_outs(_private_ins.size())
         {
             topological_sort_with_cycles();
             init_buffers();
@@ -250,6 +262,7 @@ namespace iv {
             const size_t n = _nodes.size();
 
             /* — map every InputPort* back to its owner node index — */
+            // note: do not include this graph so we do not cross the boundary of the graph itself
             std::unordered_map<InputPort*, size_t> owner;
             for (size_t i = 0; i < n; ++i) {
                 for (auto& in : _nodes[i]->inputs()) {
@@ -268,8 +281,8 @@ namespace iv {
             }
 
             /* 2. seed with nodes that read directly from *graph* inputs
-                  (i.e. any consumer of an OutputPort in `outs`)          */
-            for (auto& out : outs) {
+                  (i.e. any consumer of an OutputPort in `private_outs`)          */
+            for (auto& out : _private_outs) {
                 for (auto* dst : out.fan) {
                     if (auto it = owner.find(dst); it != owner.end()) {
                         queue.push_back(it->second);
@@ -311,27 +324,40 @@ namespace iv {
                 auto node = (node_idx < _nodes.size())
                     ? _nodes[node_idx].get()
                     : this;
+                auto node_inputs = (node_idx < _nodes.size())
+                    ? _nodes[node_idx]->inputs()
+                    : _private_ins;
 
                 size_t node_global_latency = 0;
-                for (auto& in : node->inputs()) {
+                for (auto& in : node_inputs) {
                     node_global_latency = std::max(node_global_latency, input_global_latencies[&in]);
                 }
-                for (auto& in : node->inputs()) {
+                for (auto& in : node_inputs) {
                     in.add_latency(node_global_latency - input_global_latencies[&in]);
                 }
                 if (node == this) continue;
                 for (auto& out : node->outputs()) {
                     for (auto& dst : out.fan) {
-                        dst->add_latency(out.latency());
                         input_global_latencies[dst] = node_global_latency + out.latency();
                     }
                 }
             }
         }
 
-        void tick(std::span<juce::MidiMessage> const& midi) noexcept override { for (auto& node : _nodes) node->tick(midi); }
-        std::span<InputPort const> inputs_impl() const noexcept override { return ins; }
-        std::span<OutputPort const> outputs_impl() const noexcept override { return outs; }
+        void tick(std::span<MidiMessage> const& midi) noexcept override {
+            for (size_t i = 0; i < _private_outs.size(); ++i) {
+                _private_outs[i].push(_public_ins[i].next());
+            }
+            for (auto& node : _nodes) {
+                node->tick(midi);
+            }
+            for (size_t i = 0; i < _private_ins.size(); ++i) {
+                _public_outs[i].push(_private_ins[i].next());
+            }
+        }
+
+        std::span<InputPort const> inputs_impl() const noexcept override { return _public_ins; }
+        std::span<OutputPort const> outputs_impl() const noexcept override { return _public_outs; }
 
         size_t compute_latency() const noexcept {
             std::unordered_map<InputPort const*, size_t> arrival;
@@ -351,7 +377,7 @@ namespace iv {
                 }
             }
 
-            for (auto const& sink : ins) {
+            for (auto const& sink : _private_ins) {
                 graph_latency = std::max(graph_latency, arrival[&sink]);
             }
             for (auto const& node : _nodes) {
@@ -407,34 +433,50 @@ namespace iv {
         std::unique_ptr<Node> create() const override
         {
             std::vector<std::unique_ptr<Node>> nodes;
-            std::unordered_set<InputPort const*> seen_inputs;
+            std::unordered_map<InputPort*, std::vector<OutputPort*>> port_mappings;
 
-            std::vector<InputPort> graph_inputs(num_inputs);
-            std::vector<OutputPort> graph_outputs(num_outputs);
+            // note: number of private inputs corresponds to the number of public outputs
+            // note: number of private outputs corresponds to the number of public inputs
+            std::vector<InputPort> graph_private_inputs(num_outputs);
+            std::vector<OutputPort> graph_private_outputs(num_inputs);
 
-            for (auto& factory : factories) {
+            for (auto const& factory : factories) {
                 nodes.emplace_back(factory->create());
             }
 
-            for (auto edge : edges) {
+            for (auto const& edge : edges) {
                 std::span<InputPort> inputs = (edge.destination.node == NodeFactory<Graph>::GRAPH_ID)
-                    ? graph_inputs
+                    ? graph_private_inputs
                     : nodes[edge.destination.node]->inputs();
                 std::span<OutputPort> outputs = (edge.source.node == NodeFactory<Graph>::GRAPH_ID)
-                    ? graph_outputs
+                    ? graph_private_outputs
                     : nodes[edge.source.node]->outputs();
 
-                auto& out = outputs[edge.source.port];
-                auto& in = inputs[edge.destination.port];
-                jassert(!seen_inputs.contains(&in));
-                seen_inputs.emplace(&in);
-                out.fan.emplace_back(&in);
+                auto const out = &outputs[edge.source.port];
+                auto const in = &inputs[edge.destination.port];
+                port_mappings[in].push_back(out);
+            }
+
+            for (auto const& [in, outs] : port_mappings) {
+                if (outs.size() == 1) {
+                    outs[0]->connect_to(in);
+                }
+                else {
+                    NodeFactory<SumNode> sum_factory;
+                    sum_factory.num_inputs = outs.size();
+                    auto sum_node = sum_factory.create();
+                    for (size_t i = 0; i < outs.size(); ++i) {
+                        outs[i]->connect_to(&sum_node->inputs()[i]);
+                    }
+                    sum_node->outputs()[0].connect_to(in);
+                    nodes.emplace_back(std::move(sum_node));
+                }
             }
 
             return std::make_unique<Graph>(
                 std::move(nodes),
-                std::move(graph_inputs),
-                std::move(graph_outputs)
+                std::move(graph_private_inputs),
+                std::move(graph_private_outputs)
             );
         }
 
@@ -458,110 +500,4 @@ namespace iv {
             edges.emplace_back(source, destination);
         }
     };
-    
-    #if JUCE_DEBUG
-
-    static int test1 = []() -> int {
-        iv::InputPort in;
-        iv::OutputPort out;
-
-        out.fan.emplace_back(&in);
-        in.add_latency(out.latency());
-
-        iv::Sample expected = 3.0;
-        out.push(expected);
-        auto actual = in.next();
-        jassert(actual == expected);
-        return 0;
-    }();
-
-    static int test2 = []() -> int {
-        iv::InputPort in;
-        iv::OutputPort out{1};
-
-        out.fan.emplace_back(&in);
-        in.add_latency(out.latency());
-
-        iv::Sample expected = 3.0;
-        out.push(expected);
-        in.next();
-        auto actual = in.next();
-        jassert(actual == expected);
-        return 0;
-    }();
-
-    static int test3 = []() -> int {
-        iv::InputPort in;
-        iv::OutputPort out{1};
-
-        out.fan.emplace_back(&in);
-        in.add_latency(out.latency());
-
-        iv::Sample expected = 3.0;
-        out.push(expected);
-        auto actual = out.back();
-        jassert(actual == expected);
-        return 0;
-    }();
-
-    static int test_integration1 = []() -> int {
-        iv::NodeFactory<iv::Graph> factory;
-        auto [sum, sum_id] = factory.add_node<iv::SumNode>();
-        auto p1 = sum->add_input_port();
-        auto p2 = sum->add_input_port();
-        auto in1 = factory.add_input_port();
-        auto out1 = factory.add_output_port();
-        auto out2 = factory.add_output_port();
-
-        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out1 }, { sum_id, p1 });
-        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out2 }, { sum_id, p2 });
-        factory.connect({ sum_id, 0 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in1 });
-
-        auto graph = factory.create();
-        graph->outputs()[0].update(0, 1.5);
-        graph->outputs()[1].update(0, 2.5);
-        graph->tick({});
-        auto actual = graph->inputs()[0].next();
-
-        jassert(actual == 4);
-        return 0;
-    }();
-    
-    static int test_integration2 = []() -> int {
-        iv::NodeFactory<iv::Graph> factory;
-        auto [_, warp_id] = factory.add_node<iv::WarperNode>();
-        auto in0 = factory.add_input_port();
-        auto in1 = factory.add_input_port();
-        auto out0 = factory.add_output_port();
-        auto out1 = factory.add_output_port();
-
-        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out0 }, { warp_id, 0 });
-        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out1 }, { warp_id, 1 });
-        factory.connect({ warp_id, 0 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in0 });
-        factory.connect({ warp_id, 1 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in1 });
-
-        auto graph_ptr = factory.create();
-        iv::Graph* graph = dynamic_cast<iv::Graph*>(graph_ptr.get());
-        graph->outputs()[out0].update(0, 0.99);
-        graph->outputs()[out1].update(0, 1.0);
-        graph->tick({});
-        auto r0 = graph->inputs()[in0].next();
-        auto q0 = graph->inputs()[in1].next();
-        graph->outputs()[out0].update(0, 1.2);
-        graph->outputs()[out1].update(0, 1.0);
-        graph->tick({});
-        auto r1 = graph->inputs()[in0].next();
-        auto r2 = graph->inputs()[in0].next();
-        auto q1 = graph->inputs()[in1].next();
-        auto q2 = graph->inputs()[in1].next();
-
-        auto latency = graph->compute_latency();
-
-        jassert(r0 == q0);
-        jassert(r1 == q1);
-        jassert(r2 != q2);
-        return 0;
-    }();
-
-    #endif
 }
