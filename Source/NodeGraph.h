@@ -7,8 +7,6 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
-#include <type_traits>
-#include <any>
 
 enum struct PolyblepSide {
     LEFT,
@@ -134,18 +132,28 @@ namespace iv {
     struct Node {
         virtual ~Node() = default;
         virtual void tick(std::span<juce::MidiMessage> const& midi) noexcept = 0;
-        virtual std::span<InputPort const> inputs() const noexcept = 0;
-        virtual std::span<OutputPort const> outputs() const noexcept = 0;
-
-        virtual std::span<InputPort> inputs() noexcept {
-            auto span = const_cast<Node const*>(this)->inputs();
+    public:
+        std::span<InputPort> inputs() noexcept {
+            auto span = const_cast<Node const*>(this)->inputs_impl();
             return { const_cast<InputPort*>(span.data()), span.size(), };
         }
 
-        virtual std::span<OutputPort> outputs() noexcept {
-            auto span = const_cast<Node const*>(this)->outputs();
+        std::span<InputPort const> inputs() const noexcept {
+            return inputs_impl();
+        }
+
+        std::span<OutputPort> outputs() noexcept {
+            auto span = const_cast<Node const*>(this)->outputs_impl();
             return { const_cast<OutputPort*>(span.data()), span.size(), };
         }
+
+        std::span<OutputPort const> outputs() const noexcept {
+            return outputs_impl();
+        }
+
+    protected:
+        virtual std::span<InputPort const> inputs_impl() const noexcept = 0;
+        virtual std::span<OutputPort const> outputs_impl() const noexcept = 0;
     };
 
     /* ─────────────  Helpers  ───────────── */
@@ -169,8 +177,8 @@ namespace iv {
             }
             out.push(result);
         }
-        std::span<InputPort const> inputs() const noexcept override { return ins; }
-        std::span<OutputPort const> outputs() const noexcept override { return { &out, 1 }; }
+        std::span<InputPort const> inputs_impl() const noexcept override { return ins; }
+        std::span<OutputPort const> outputs_impl() const noexcept override { return { &out, 1 }; }
     };
 
     struct IntegratorNode : public Node {
@@ -180,8 +188,8 @@ namespace iv {
         void tick(std::span<juce::MidiMessage> const& midi) noexcept override {
             out.push(in_vel.next() / in_sample_rate.next() + in_prev.next());
         }
-        std::span<InputPort const> inputs() const noexcept override { return { &in_vel, 3 }; }
-        std::span<OutputPort const> outputs() const noexcept override { return { &out, 1 }; }
+        std::span<InputPort const> inputs_impl() const noexcept override { return { &in_vel, 3 }; }
+        std::span<OutputPort const> outputs_impl() const noexcept override { return { &out, 1 }; }
     };
 
     struct WarperNode : public Node {
@@ -207,8 +215,8 @@ namespace iv {
             }
             out_aa.push(sample_warped_aa);
         }
-        std::span<InputPort const> inputs() const noexcept override { return { &in, 2 }; }
-        std::span<OutputPort const> outputs() const noexcept override { return { &out, 2 }; }
+        std::span<InputPort const> inputs_impl() const noexcept override { return { &in, 2 }; }
+        std::span<OutputPort const> outputs_impl() const noexcept override { return { &out, 2 }; }
     };
 
     /* ─────────────  Patch  ───────────── */
@@ -322,10 +330,10 @@ namespace iv {
         }
 
         void tick(std::span<juce::MidiMessage> const& midi) noexcept override { for (auto& node : _nodes) node->tick(midi); }
-        std::span<InputPort const> inputs() const noexcept override { return ins; }
-        std::span<OutputPort const> outputs() const noexcept override { return outs; }
+        std::span<InputPort const> inputs_impl() const noexcept override { return ins; }
+        std::span<OutputPort const> outputs_impl() const noexcept override { return outs; }
 
-        size_t compute_latency() const {
+        size_t compute_latency() const noexcept {
             std::unordered_map<InputPort const*, size_t> arrival;
             size_t graph_latency = 0;
 
@@ -532,7 +540,8 @@ namespace iv {
         factory.connect({ warp_id, 0 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in0 });
         factory.connect({ warp_id, 1 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in1 });
 
-        auto graph = factory.create();
+        auto graph_ptr = factory.create();
+        iv::Graph* graph = dynamic_cast<iv::Graph*>(graph_ptr.get());
         graph->outputs()[out0].update(0, 0.99);
         graph->outputs()[out1].update(0, 1.0);
         graph->tick({});
@@ -546,7 +555,11 @@ namespace iv {
         auto q1 = graph->inputs()[in1].next();
         auto q2 = graph->inputs()[in1].next();
 
-        jassert(r2 == 4);
+        auto latency = graph->compute_latency();
+
+        jassert(r0 == q0);
+        jassert(r1 == q1);
+        jassert(r2 != q2);
         return 0;
     }();
 
