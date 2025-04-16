@@ -18,6 +18,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     juce::AudioProcessorValueTreeState _value_tree_state;
 
     std::atomic<float>* _warp_threshold;
+    std::atomic<float>* _noise_level;
 
     // [note number, midi channel] = [superposed, velocity]
     std::unordered_map<std::tuple<int, int>, std::vector<unsigned long long>, tuple_hash> _note_velocities;
@@ -25,7 +26,8 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
 public:
-    static juce::String const WARP_THRESHOLD_IDENTIFIER;
+    static juce::String const WARP_THRESHOLD_ID;
+    static juce::String const NOISE_LEVEL_ID;
 
     IntravenousAudioProcessor();
     ~IntravenousAudioProcessor() override;
@@ -42,10 +44,9 @@ public:
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
 private:
-    float accumulate_step(float const&, float const&, float const&) const;
+    float accumulate_step(float const&, float const&, float const&, float const&) const;
     std::tuple<bool, float> warp_sample(float, float const&) const;
     float warp_positive_sample(float const&, float const&) const;
-    float remove_dc_offset(float const&, float const&, float&) const;
 
 public:
     juce::AudioProcessorEditor* createEditor() override;

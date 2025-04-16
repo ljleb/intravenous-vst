@@ -1,7 +1,10 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "NodeGraph.h"
+#include <random>
 
-juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER = "warp_threshold";
+juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_ID = "warp_threshold";
+juce::String const IntravenousAudioProcessor::NOISE_LEVEL_ID = "noise_level";
 
 IntravenousAudioProcessor::IntravenousAudioProcessor():
     #ifndef JucePlugin_PreferredChannelConfigurations
@@ -17,18 +20,24 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     _value_tree_state {
         *this, nullptr, "PARAMETERS", {
             std::make_unique<juce::AudioParameterFloat>(
-                WARP_THRESHOLD_IDENTIFIER,
+                WARP_THRESHOLD_ID,
                 "Warp Threshold",
                 juce::NormalisableRange<float>(0.f, 1.f, .0001f),
                 1.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                NOISE_LEVEL_ID,
+                "Noise Level",
+                juce::NormalisableRange<float>(0.f, 0.1f, .0001f),
+                0.f),
         }
     },
-    _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_IDENTIFIER))
+    _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_ID)),
+    _noise_level(_value_tree_state.getRawParameterValue(NOISE_LEVEL_ID))
 {
     setLatencySamples(1);
-    _unordered_midi[1000] = {
-        juce::MidiMessage::noteOn(1, 70, juce::uint8(50))
-    };
+    //_unordered_midi[1000] = {
+    //    juce::MidiMessage::noteOn(1, 70, juce::uint8(50))
+    //};
 }
 
 IntravenousAudioProcessor::~IntravenousAudioProcessor() {
@@ -111,37 +120,6 @@ bool IntravenousAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
 }
 #endif
 
-enum struct PolyblepSide {
-    LEFT,
-    RIGHT,
-};
-
-float polyblep_phi(float const& sample, float const& warp_threshold) {
-    auto const res = (sample / warp_threshold + 1.f) / 2.f;
-    if (!std::isfinite(res)) return 0.5;
-    return res;
-}
-
-float polyblep_p(float const& phi, float const& delta, PolyblepSide side) {
-    if (side == PolyblepSide::RIGHT && phi < delta) {
-        auto const& first_order = 2.f * phi / delta;
-        auto const& second_order = phi / delta;
-        return first_order - second_order*second_order - 1;
-    }
-    if (side == PolyblepSide::LEFT && 1 - delta <= phi) {
-        auto const& second_order = (phi - 1) / delta + 1;
-        return second_order*second_order;
-    }
-    return 0;
-}
-
-float polyblep_error(float const& sample, float const& delta, float const& warp_threshold, PolyblepSide side) {
-    float const phi = polyblep_phi(sample, warp_threshold);
-    float const p = polyblep_p(phi, delta, side) * warp_threshold;
-    if (!std::isfinite(p)) return 0.f;
-    return p;
-}
-
 void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi_data) {
     juce::ScopedNoDenormals no_denormals;
     float* const* const write_buffer = audio.getArrayOfWritePointers();
@@ -179,6 +157,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
         }
 
         float const warp_threshold = _warp_threshold->load();
+        float const noise_level = _noise_level->load();
 
         if (sample_index < latency) {
             for (size_t channel = 0; channel < channels; ++channel) {
@@ -202,7 +181,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
                     auto const frequency = juce::MidiMessage::getMidiNoteInHertz(note_number);
                     float const delta = float(2.0 * frequency / getSampleRate());
 
-                    float const voice_accumulated = accumulate_step(voice, warp_threshold, delta);
+                    float const voice_accumulated = accumulate_step(voice, warp_threshold, noise_level, delta);
                     auto const [did_warp, voice_warpped] = warp_sample(voice_accumulated, warp_threshold);
 
                     auto const& note_gain = velocities.back() / 127.f;
@@ -230,8 +209,13 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
 void IntravenousAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) {
 }
 
-float IntravenousAudioProcessor::accumulate_step(float const& sample, float const& warp_threshold, float const& delta) const {
-    return sample + 2.f * warp_threshold * delta;
+float IntravenousAudioProcessor::accumulate_step(float const& sample, float const& warp_threshold, float const& noise_level, float const& delta) const {
+    // generate gaussian spectral noise with expected norm of 1
+    std::mt19937 generator(std::random_device{}());
+    //std::normal_distribution<float> distribution(0.f, 0.5f); // 2.f / M_PI
+    std::uniform_real_distribution<float> distribution(-1.f, 1.f);
+    float randn = distribution(generator);
+    return sample + 2.f * warp_threshold * delta + randn * noise_level;
 }
 
 std::tuple<bool, float> IntravenousAudioProcessor::warp_sample(

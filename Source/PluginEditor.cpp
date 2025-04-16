@@ -6,7 +6,8 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     _audio_processor(audio_processor)
 {
     for (auto const& parameter_identifier: {
-        IntravenousAudioProcessor::WARP_THRESHOLD_IDENTIFIER,
+        IntravenousAudioProcessor::WARP_THRESHOLD_ID,
+        IntravenousAudioProcessor::NOISE_LEVEL_ID,
     }) {
         _slider_packs.emplace_back(
             std::make_unique<SliderPack>(
