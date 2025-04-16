@@ -35,7 +35,7 @@ float polyblep_p(float const& phi, float const& delta, PolyblepSide side) {
 }
 
 float polyblep_error(float sample, float delta, float warp_threshold, PolyblepSide side) {
-    float sign = std::signbit(delta);
+    float sign = 1.f - std::signbit(delta) * 2.f;
     delta = std::abs(delta) / warp_threshold;
 
     float const phi = polyblep_phi(sample, warp_threshold);
@@ -207,8 +207,8 @@ namespace iv {
             }
             out_aa.push(sample_warped_aa);
         }
-        std::span<InputPort> inputs() noexcept override { return { &in, 2 }; }
-        std::span<OutputPort> outputs() noexcept override { return { &out, 2 }; }
+        std::span<InputPort const> inputs() const noexcept override { return { &in, 2 }; }
+        std::span<OutputPort const> outputs() const noexcept override { return { &out, 2 }; }
     };
 
     /* ─────────────  Patch  ───────────── */
@@ -238,8 +238,7 @@ namespace iv {
             first when you fan‑out from the graph’s external
             outputs, as well as nodes with no inupts.
         */
-        void topological_sort_with_cycles()
-        {
+        void topological_sort_with_cycles() {
             const size_t n = _nodes.size();
 
             /* — map every InputPort* back to its owner node index — */
@@ -296,19 +295,24 @@ namespace iv {
             _nodes.swap(sorted);   // new deterministic execution order, cycles allowed
         }
 
-        void init_buffers()
-        {
+        void init_buffers() {
             std::unordered_map<InputPort const*, size_t> input_global_latencies;
 
-            for (size_t node = 0; node < _nodes.size(); ++node) {
+            for (size_t node_idx = 0; node_idx < _nodes.size() + 1; ++node_idx) {
+                // node_idx == _nodes.size() means this graph
+                auto node = (node_idx < _nodes.size())
+                    ? _nodes[node_idx].get()
+                    : this;
+
                 size_t node_global_latency = 0;
-                for (auto& in : _nodes[node]->inputs()) {
+                for (auto& in : node->inputs()) {
                     node_global_latency = std::max(node_global_latency, input_global_latencies[&in]);
                 }
-                for (auto& in : _nodes[node]->inputs()) {
+                for (auto& in : node->inputs()) {
                     in.add_latency(node_global_latency - input_global_latencies[&in]);
                 }
-                for (auto& out : _nodes[node]->outputs()) {
+                if (node == this) continue;
+                for (auto& out : node->outputs()) {
                     for (auto& dst : out.fan) {
                         dst->add_latency(out.latency());
                         input_global_latencies[dst] = node_global_latency + out.latency();
@@ -446,74 +450,105 @@ namespace iv {
             edges.emplace_back(source, destination);
         }
     };
+    
+    #if JUCE_DEBUG
+
+    static int test1 = []() -> int {
+        iv::InputPort in;
+        iv::OutputPort out;
+
+        out.fan.emplace_back(&in);
+        in.add_latency(out.latency());
+
+        iv::Sample expected = 3.0;
+        out.push(expected);
+        auto actual = in.next();
+        jassert(actual == expected);
+        return 0;
+    }();
+
+    static int test2 = []() -> int {
+        iv::InputPort in;
+        iv::OutputPort out{1};
+
+        out.fan.emplace_back(&in);
+        in.add_latency(out.latency());
+
+        iv::Sample expected = 3.0;
+        out.push(expected);
+        in.next();
+        auto actual = in.next();
+        jassert(actual == expected);
+        return 0;
+    }();
+
+    static int test3 = []() -> int {
+        iv::InputPort in;
+        iv::OutputPort out{1};
+
+        out.fan.emplace_back(&in);
+        in.add_latency(out.latency());
+
+        iv::Sample expected = 3.0;
+        out.push(expected);
+        auto actual = out.back();
+        jassert(actual == expected);
+        return 0;
+    }();
+
+    static int test_integration1 = []() -> int {
+        iv::NodeFactory<iv::Graph> factory;
+        auto [sum, sum_id] = factory.add_node<iv::SumNode>();
+        auto p1 = sum->add_input_port();
+        auto p2 = sum->add_input_port();
+        auto in1 = factory.add_input_port();
+        auto out1 = factory.add_output_port();
+        auto out2 = factory.add_output_port();
+
+        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out1 }, { sum_id, p1 });
+        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out2 }, { sum_id, p2 });
+        factory.connect({ sum_id, 0 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in1 });
+
+        auto graph = factory.create();
+        graph->outputs()[0].update(0, 1.5);
+        graph->outputs()[1].update(0, 2.5);
+        graph->tick({});
+        auto actual = graph->inputs()[0].next();
+
+        jassert(actual == 4);
+        return 0;
+    }();
+    
+    static int test_integration2 = []() -> int {
+        iv::NodeFactory<iv::Graph> factory;
+        auto [_, warp_id] = factory.add_node<iv::WarperNode>();
+        auto in0 = factory.add_input_port();
+        auto in1 = factory.add_input_port();
+        auto out0 = factory.add_output_port();
+        auto out1 = factory.add_output_port();
+
+        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out0 }, { warp_id, 0 });
+        factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out1 }, { warp_id, 1 });
+        factory.connect({ warp_id, 0 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in0 });
+        factory.connect({ warp_id, 1 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in1 });
+
+        auto graph = factory.create();
+        graph->outputs()[out0].update(0, 0.99);
+        graph->outputs()[out1].update(0, 1.0);
+        graph->tick({});
+        auto r0 = graph->inputs()[in0].next();
+        auto q0 = graph->inputs()[in1].next();
+        graph->outputs()[out0].update(0, 1.2);
+        graph->outputs()[out1].update(0, 1.0);
+        graph->tick({});
+        auto r1 = graph->inputs()[in0].next();
+        auto r2 = graph->inputs()[in0].next();
+        auto q1 = graph->inputs()[in1].next();
+        auto q2 = graph->inputs()[in1].next();
+
+        jassert(r2 == 4);
+        return 0;
+    }();
+
+    #endif
 }
-
-#if JUCE_DEBUG
-
-static int test1 = []() -> int {
-    iv::InputPort in;
-    iv::OutputPort out;
-
-    out.fan.emplace_back(&in);
-    in.add_latency(out.latency());
-
-    iv::Sample expected = 3.0;
-    out.push(expected);
-    auto actual = in.next();
-    jassert(actual == expected);
-    return 0;
-}();
-
-static int test2 = []() -> int {
-    iv::InputPort in;
-    iv::OutputPort out{1};
-
-    out.fan.emplace_back(&in);
-    in.add_latency(out.latency());
-
-    iv::Sample expected = 3.0;
-    out.push(expected);
-    in.next();
-    auto actual = in.next();
-    jassert(actual == expected);
-    return 0;
-}();
-
-static int test3 = []() -> int {
-    iv::InputPort in;
-    iv::OutputPort out{1};
-
-    out.fan.emplace_back(&in);
-    in.add_latency(out.latency());
-
-    iv::Sample expected = 3.0;
-    out.push(expected);
-    auto actual = out.back();
-    jassert(actual == expected);
-    return 0;
-}();
-
-static int test_integration1 = []() -> int {
-    iv::NodeFactory<iv::Graph> factory;
-    auto [sum, sum_id] = factory.add_node<iv::SumNode>();
-    auto p1 = sum->add_input_port();
-    auto p2 = sum->add_input_port();
-    auto in1 = factory.add_input_port();
-    auto out1 = factory.add_output_port();
-    auto out2 = factory.add_output_port();
-
-    factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out1 }, { sum_id, p1 });
-    factory.connect({ iv::NodeFactory<iv::Graph>::GRAPH_ID, out2 }, { sum_id, p2 });
-    factory.connect({ sum_id, 0 }, { iv::NodeFactory<iv::Graph>::GRAPH_ID, in1 });
-
-    auto graph = factory.create();
-    graph->outputs()[0].update(0, 1.5);
-    graph->outputs()[1].update(0, 2.5);
-    graph->tick({});
-    auto actual = graph->inputs()[0].next();
-
-    jassert(actual == 4);
-    return 0;
-}();
-
-#endif
