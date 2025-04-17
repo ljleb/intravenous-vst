@@ -1,27 +1,16 @@
 #pragma once
 #include <JuceHeader.h>
-
-struct tuple_hash {
-    template <typename T1, typename T2>
-    size_t operator()(const std::tuple<T1, T2>& x) const
-    {
-        return std::get<0>(x) ^ std::get<1>(x);
-    }
-};
+#include "NodeGraph.h"
 
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
-    // [audio channel][note number, midi channel] = sample
-    std::vector<std::unordered_map<std::tuple<int, int>, float, tuple_hash>> _voices;
-    std::vector<std::queue<float>> _latency_buffers;
-    std::unordered_map<size_t, std::vector<juce::MidiMessage>> _unordered_midi;
-
     juce::AudioProcessorValueTreeState _value_tree_state;
 
     std::atomic<float>* _warp_threshold;
     std::atomic<float>* _noise_level;
 
-    // [note number, midi channel] = [superposed, velocity]
-    std::unordered_map<std::tuple<int, int>, std::vector<unsigned long long>, tuple_hash> _note_velocities;
+    std::unique_ptr<iv::Graph> _graph;
+    iv::PortId _left_port, _right_port;
+    std::vector<std::array<iv::MidiMessage, 128>> _midi_buffers;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
@@ -34,7 +23,6 @@ public:
 
     void prepareToPlay(double, int) override;
     void releaseResources() override;
-    void clearSideEffects();
 
 #ifndef JucePlugin_PreferredChannelConfigurations
     bool isBusesLayoutSupported(const BusesLayout&) const override;
@@ -44,9 +32,7 @@ public:
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
 private:
-    float accumulate_step(float const&, float const&, float const&, float const&) const;
-    std::tuple<bool, float> warp_sample(float, float const&) const;
-    float warp_positive_sample(float const&, float const&) const;
+    void init_graph();
 
 public:
     juce::AudioProcessorEditor* createEditor() override;

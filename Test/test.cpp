@@ -43,9 +43,7 @@ TEST(Ports, Test3) {
 
 TEST(Ports, TestIntegration1) {
     iv::NodeFactory<iv::Graph> factory;
-    auto [sum, sum_id] = factory.add_node<iv::SumNode>();
-    auto p1 = sum->add_input_port();
-    auto p2 = sum->add_input_port();
+    auto [sum, sum_id] = factory.add_node<iv::SumNode>(2);
     auto in1 = factory.add_input_port();
     auto in2 = factory.add_input_port();
     auto out1 = factory.add_output_port();
