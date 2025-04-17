@@ -66,7 +66,6 @@ namespace iv {
             } note_on;
             struct {
                 uint8_t note_number;
-                uint8_t amplitude;
             } note_off;
         };
     };
@@ -93,6 +92,8 @@ namespace iv {
         InputPort& operator=(InputPort&& other) noexcept {
             _buffer = std::move(other._buffer);
             _index = other._index;
+            _default = other._default;
+            _latency = other._latency;
             return *this;
         }
 
@@ -673,8 +674,8 @@ namespace iv {
             std::vector<std::unique_ptr<Node>> nodes;
             std::unordered_map<InputPort*, std::vector<OutputPort*>> port_mappings;
 
-            // note: number of private inputs corresponds to the number of public outputs
-            // note: number of private outputs corresponds to the number of public inputs
+            // note: number of private inputs corresponds to number of public outputs
+            // note: number of private outputs corresponds to number of public inputs
             std::vector<InputPort> graph_private_inputs(num_outputs);
             std::vector<OutputPort> graph_private_outputs(num_inputs);
 
@@ -730,11 +731,34 @@ namespace iv {
             return std::make_tuple(node_ref, factories.size() - 1);
         }
 
-        size_t add_input_port() noexcept {
+        size_t duplicate_node(size_t node_id) {
+            auto const& factory = factories[node_id];
+            factories.emplace_back(factory->clone());
+            size_t new_node_id = factories.size() - 1;
+            size_t edges_size = edges.size();
+            for (size_t i = 0; i < edges_size; ++i) {
+                Edge edge_clone = edges[i];
+                bool needs_duplicate = false;
+                if (edge_clone.destination.node == node_id) {
+                    edge_clone.destination.node = new_node_id;
+                    needs_duplicate = true;
+                }
+                if (edge_clone.source.node == node_id) {
+                    edge_clone.source.node = new_node_id;
+                    needs_duplicate = true;
+                }
+                if (needs_duplicate) {
+                    edges.push_back(edge_clone);
+                }
+            }
+            return new_node_id;
+        }
+
+        PortId add_input_port() noexcept {
             return num_inputs++;
         }
 
-        size_t add_output_port() noexcept {
+        PortId add_output_port() noexcept {
             return num_outputs++;
         }
 
@@ -743,8 +767,86 @@ namespace iv {
         }
     };
 
+    //class RemoteSinkNode : public Node {
+    //    InputPort _in;
+    //    std::vector<OutputPort> _remote_outs;
+
+    //public:
+    //    explicit RemoteSinkNode(std::vector<OutputPort>&& remote_outs) noexcept :
+    //        _remote_outs(std::move(remote_outs))
+    //    {}
+
+    //    void tick(std::span<MidiMessage const> const&) noexcept override {
+    //        for (auto& remote_out : _remote_outs) {
+    //            remote_out.push(_in.get());
+    //        }
+    //    }
+
+    //    std::span<InputPort const> inputs_impl() const noexcept override { return { &_in, 1 }; }
+    //    std::span<OutputPort const> outputs_impl() const noexcept override { return _remote_outs; }
+    //};
+
+    //template<>
+    //class NodeFactory<RemoteSinkNode> : public NodeFactoryBaseTemplate<RemoteSinkNode> {
+    //    size_t _num_remotes;
+
+    //public:
+    //    template<class... Args>
+    //    explicit NodeFactory() noexcept :
+    //        _num_remotes(0)
+    //    {}
+
+    //    std::unique_ptr<RemoteSinkNode> create_t() const override {
+    //        std::vector<OutputPort> remote_outs(_num_remotes);
+    //        return std::make_unique<RemoteSinkNode>(std::move(remote_outs));
+    //    }
+
+    //    std::unique_ptr<NodeFactoryBase> clone() const override {
+    //        assert(false); // cannot clone this, sorry liskov
+    //    }
+
+    //    PortId add_remote() noexcept {
+    //        return _num_remotes++;
+    //    }
+    //};
+    //
+    //class RemoteSourceNode : public Node {
+    //    InputPort _remote_in;
+    //    OutputPort _out;
+
+    //public:
+    //    void tick(std::span<MidiMessage const> const&) noexcept override {}
+
+    //    std::span<InputPort const> inputs_impl() const noexcept override { return { &_remote_in, 1 }; }
+    //    std::span<OutputPort const> outputs_impl() const noexcept override { return { &_out, 1 }; }
+    //};
+
+    //template<>
+    //class NodeFactory<RemoteSourceNode> : public NodeFactoryBaseTemplate<RemoteSourceNode> {
+    //    NodeFactory<RemoteSinkNode>* _connection;
+    //    PortId _port_id;
+
+    //public:
+    //    explicit NodeFactory(NodeFactory<RemoteSinkNode>* connection) noexcept :
+    //        _connection(connection),
+    //        _port_id(connection->add_remote())
+    //    {
+    //        _port_id = connection->add_remote();
+    //    }
+
+    //    std::unique_ptr<RemoteSourceNode> create_t() const override {
+    //        return std::make_unique<RemoteSourceNode>(_connection->get_out_port());
+    //    }
+
+    //    std::unique_ptr<NodeFactoryBase> clone() const override {
+    //        return std::make_unique<NodeFactory>(_connection);
+    //    }
+    //};
+
     struct MidiNode : public Node {
         static constexpr size_t const MAX_MIDI_NOTES = 128;
+        static constexpr size_t const BASE_INPUTS = 1;
+        static constexpr size_t const BASE_GRAPH_INPUTS = 2;
 
         struct MidiNoteState {
             size_t ttl{0};
@@ -755,12 +857,21 @@ namespace iv {
         std::array<MidiNoteState, MAX_MIDI_NOTES> _note_states;
         std::vector<uint8_t> _active_voices;
         size_t _max_ttl;
-        InputPort in_silence_threshold;
+        std::vector<InputPort> _public_inputs;
         OutputPort out_mix;
 
-        explicit MidiNode(NodeFactory<Graph> const& voice_factory) noexcept:
-            in_silence_threshold(std::pow(10.0, -60.0 / 20.0)) // -60db
-        {
+        explicit MidiNode(
+            NodeFactory<Graph> const& voice_factory,
+            std::vector<InputPort>&& extra_public_inputs
+        ) noexcept {
+            _public_inputs.reserve(extra_public_inputs.size() + BASE_INPUTS);
+            _public_inputs.emplace_back(std::pow(10.0, -60.0 / 20.0)); // silence_threshold, -60db
+            assert(_public_inputs.size() == BASE_INPUTS);
+            for (auto& extra_input : extra_public_inputs) {
+                _public_inputs.emplace_back(std::move(extra_input));
+            }
+            assert(_public_inputs.size() == _public_inputs.capacity());
+
             for (size_t i = 0; i < MAX_MIDI_NOTES; ++i) {
                 _graphs[i] = voice_factory.create();
             }
@@ -769,7 +880,7 @@ namespace iv {
         }
 
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
-            auto silence_threshold = in_silence_threshold.get();
+            auto silence_threshold = _public_inputs[0].get();
 
             for (auto const& midi_message : midi) {
                 if (midi_message.type == MidiMessageType::NOTE_ON) {
@@ -802,8 +913,12 @@ namespace iv {
                 }
 
                 auto const graph_inputs = graph->inputs();
-                graph_inputs[0].update(note_number_to_frequency(note_number));
-                graph_inputs[1].update(note_state.amplitude / 127.0);
+                graph_inputs[0].push(note_number_to_frequency(note_number));
+                graph_inputs[1].push(note_state.amplitude / 127.0);
+                auto extra_inputs = get_extra_inputs();
+                for (size_t extra_i = 0; extra_i < extra_inputs.size(); ++extra_i) {
+                    graph_inputs[BASE_GRAPH_INPUTS+extra_i].push(extra_inputs[extra_i].get());
+                }
                 graph->tick(midi);
                 result += graph->outputs()[0].get();
             }
@@ -811,15 +926,19 @@ namespace iv {
         }
 
         size_t inner_latency() const noexcept override {
-            return _graphs[0]->inner_latency();
+            return _max_ttl;
         }
 
         static Sample note_number_to_frequency(uint8_t note_number) {
             return Sample(440.0 * std::pow(2.0, (note_number - 69) / 12.0));
         }
 
-        std::span<InputPort const> inputs_impl() const noexcept override { return { &in_silence_threshold, 1 }; }
+        std::span<InputPort const> inputs_impl() const noexcept override { return _public_inputs; }
         std::span<OutputPort const> outputs_impl() const noexcept override { return { &out_mix, 1 }; }
+
+        std::span<InputPort> get_extra_inputs() {
+            return { _public_inputs.data() + BASE_INPUTS, _public_inputs.size() - BASE_INPUTS };
+        }
     };
 
     template<>
@@ -827,17 +946,19 @@ namespace iv {
         NodeFactory<Graph> _voice_factory;
         PortId _frequency_port, _amplitude_port;
         PortId _output_port;
+        size_t _num_extra_public_inputs;
 
     public:
-        
         explicit NodeFactory() noexcept:
             _frequency_port(_voice_factory.add_input_port()),
             _amplitude_port(_voice_factory.add_input_port()),
-            _output_port(_voice_factory.add_output_port())
+            _output_port(_voice_factory.add_output_port()),
+            _num_extra_public_inputs(0)
         {}
 
         std::unique_ptr<MidiNode> create_t() const override {
-            return std::make_unique<MidiNode>(_voice_factory);
+            std::vector<InputPort> extra_public_inputs(_num_extra_public_inputs);
+            return std::make_unique<MidiNode>(_voice_factory, std::move(extra_public_inputs));
         }
 
         std::unique_ptr<NodeFactoryBase> clone() const override {
@@ -846,6 +967,7 @@ namespace iv {
             factory->_frequency_port = _frequency_port;
             factory->_amplitude_port = _amplitude_port;
             factory->_output_port = _output_port;
+            factory->_num_extra_public_inputs = _num_extra_public_inputs;
             return factory;
         }
 
@@ -853,16 +975,23 @@ namespace iv {
             return _voice_factory;
         }
 
-        PortId get_frequency_port() const noexcept {
+        PortId get_voice_frequency_port() const noexcept {
             return _frequency_port;
         }
 
-        PortId get_amplitude_port() const noexcept {
+        PortId get_voice_amplitude_port() const noexcept {
             return _amplitude_port;
         }
 
-        PortId get_output_port() const noexcept {
+        PortId get_voice_output_port() const noexcept {
             return _output_port;
+        }
+
+        // returns [midi port id, voice port id]
+        std::tuple<PortId, PortId> add_extra_input_port() noexcept {
+            PortId midi_id = _num_extra_public_inputs++;
+            PortId voice_id = _voice_factory.add_input_port();
+            return std::make_tuple(midi_id + MidiNode::BASE_INPUTS, voice_id);
         }
     };
 }

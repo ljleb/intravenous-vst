@@ -115,48 +115,57 @@ void IntravenousAudioProcessor::init_graph() {
     _left_port =  graph.add_output_port();
     _right_port = graph.add_output_port();
 
-    auto [midi_left, midi_left_id] = graph.add_node<iv::MidiNode>();
-    {
-        auto midi_graph_id = iv::NodeFactory<iv::Graph>::GRAPH_ID;
-        auto& midi_graph = midi_left->get_voice_factory();
-        auto [integrator, integrator_id] = midi_graph.add_node<iv::IntegratorNode>();
-        auto [warper, warper_id] = midi_graph.add_node<iv::WarperNode>();
-        auto [noise_generator, noise_generator_id] = midi_graph.add_node<iv::UniformNoiseNode>();
+    auto [sample_rate, sample_rate_id] = graph.add_node<SampleRateNode>(this);
+    auto [warp_threshold_knob, warp_threshold_knob_id] = graph.add_node<KnobNode<float>>(_warp_threshold);
+    auto [noise_generator, noise_generator_id] = graph.add_node<iv::UniformNoiseNode>();
 
-        auto [sample_rate, sample_rate_id] = midi_graph.add_node<SampleRateNode>(this);
-        auto [warp_threshold_knob, warp_threshold_knob_id] = midi_graph.add_node<KnobNode<float>>(_warp_threshold);
-        auto [noise_level_knob, noise_level_knob_id] = midi_graph.add_node<KnobNode<float>>(_noise_level);
+    // noise
+    auto [noise_level_knob, noise_level_knob_id] = graph.add_node<KnobNode<float>>(_noise_level);
+    auto [noise, noise_id] = graph.add_node<iv::MultiplyNode>(2);
+    graph.connect({ noise_generator_id, 0 }, { noise_id, 0 });
+    graph.connect({ noise_level_knob_id, 0 }, { noise_id, 1 });
+
+    auto [midi, midi_id] = graph.add_node<iv::MidiNode>();
+
+    // shared inputs
+    auto [midi_noise_generator_port, voice_noise_generator_port] = midi->add_extra_input_port();
+    auto [midi_sample_rate_port, voice_sample_rate_port] = midi->add_extra_input_port();
+    auto [midi_warp_threshold_port, voice_warp_threshold_port] = midi->add_extra_input_port();
+    graph.connect({ noise_id, 0 }, { midi_id, midi_noise_generator_port });
+    graph.connect({ sample_rate_id, 0 }, { midi_id, midi_sample_rate_port });
+    graph.connect({ warp_threshold_knob_id, 0 }, { midi_id, midi_warp_threshold_port });
+
+    // midi voice
+    {
+        auto midi_voice_id = iv::NodeFactory<iv::Graph>::GRAPH_ID;
+        auto& midi_voice = midi->get_voice_factory();
+        auto [integrator, integrator_id] = midi_voice.add_node<iv::IntegratorNode>();
+        auto [warper, warper_id] = midi_voice.add_node<iv::WarperNode>();
 
         // main loop
-        auto [frequency, frequency_id] = midi_graph.add_node<iv::MultiplyNode>(2);
-        auto [frequency_offset, frequency_offset_id] = midi_graph.add_node<iv::ConstantNode>(4.0);
-        midi_graph.connect({ midi_graph_id, midi_left->get_frequency_port() }, { frequency_id, 0 });
-        midi_graph.connect({ frequency_offset_id, 0 }, { frequency_id, 1 });
-        midi_graph.connect({ frequency_id, 0 }, { integrator_id, 0 });
-        midi_graph.connect({ integrator_id, 0 }, { warper_id, 0 });
-        midi_graph.connect({ warper_id, 1 }, { integrator_id, 1 });
-
-        // noise
-        auto [noise, noise_id] = midi_graph.add_node<iv::MultiplyNode>(2);
-        midi_graph.connect({ noise_generator_id, 0 },  { noise_id, 0 });
-        midi_graph.connect({ noise_level_knob_id, 0 }, { noise_id, 1 });
+        auto [frequency, frequency_id] = midi_voice.add_node<iv::MultiplyNode>(2);
+        auto [frequency_offset, frequency_offset_id] = midi_voice.add_node<iv::ConstantNode>(4.0);
+        midi_voice.connect({ midi_voice_id, midi->get_voice_frequency_port() }, { frequency_id, 0 });
+        midi_voice.connect({ frequency_offset_id, 0 }, { frequency_id, 1 });
+        midi_voice.connect({ frequency_id, 0 }, { integrator_id, 0 });
+        midi_voice.connect({ integrator_id, 0 }, { warper_id, 0 });
+        midi_voice.connect({ warper_id, 1 }, { integrator_id, 1 });
 
         // knobs
-        midi_graph.connect({ sample_rate_id, 0 }, { integrator_id, 2 });
-        midi_graph.connect({ warp_threshold_knob_id, 0 }, { warper_id, 1 });
-        midi_graph.connect({ noise_id, 0 }, { warper_id, 0 });
+        midi_voice.connect({ midi_voice_id, voice_sample_rate_port }, { integrator_id, 2 });
+        midi_voice.connect({ midi_voice_id, voice_noise_generator_port }, { warper_id, 0 });
+        midi_voice.connect({ midi_voice_id, voice_warp_threshold_port }, { warper_id, 1 });
 
         // out
-        auto [amplitude, amplitude_id] = midi_graph.add_node<iv::MultiplyNode>(2);
-        midi_graph.connect({ midi_graph_id, midi_left->get_amplitude_port() }, { amplitude_id, 0 });
-        midi_graph.connect({ warper_id, 0 },                                   { amplitude_id, 1 });
-        midi_graph.connect({ amplitude_id, 0 }, { midi_graph_id, midi_left->get_output_port() });
+        auto [amplitude, amplitude_id] = midi_voice.add_node<iv::MultiplyNode>(2);
+        midi_voice.connect({ midi_voice_id, midi->get_voice_amplitude_port() }, { amplitude_id, 0 });
+        midi_voice.connect({ warper_id, 0 }, { amplitude_id, 1 });
+        midi_voice.connect({ amplitude_id, 0 }, { midi_voice_id, midi->get_voice_output_port() });
     }
 
-    auto [midi_right, midi_right_id] = graph.add_node<iv::MidiNode>();
-    *midi_right = *midi_left;
+    auto midi_right_id = graph.duplicate_node(midi_id);
 
-    graph.connect({ midi_left_id, 0 }, { graph_id, _left_port });
+    graph.connect({ midi_id, 0 }, { graph_id, _left_port });
     graph.connect({ midi_right_id, 0 }, { graph_id, _right_port });
 
     _graph = graph.create_t();
@@ -259,8 +268,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
             }
             else if (midi_message.isNoteOff() || midi_message.isNoteOn() && midi_message.getVelocity() == 0) {
                 iv::MidiMessage iv_midi_message { .type = iv::MidiMessageType::NOTE_OFF };
-                iv_midi_message.note_on.amplitude = midi_message.getVelocity();
-                iv_midi_message.note_on.note_number = midi_message.getNoteNumber();
+                iv_midi_message.note_off.note_number = midi_message.getNoteNumber();
                 midi_buffer[i] = iv_midi_message;
                 break;
             }
