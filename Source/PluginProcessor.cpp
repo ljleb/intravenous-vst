@@ -78,20 +78,12 @@ template<class T>
 class KnobNode : public iv::Node {
     iv::OutputPort _output;
     std::atomic<T>* _value;
-    T _cache;
-    size_t _ttl;
-    size_t _reset_ttl;
 
 public:
-    explicit KnobNode(std::atomic<T>* value) noexcept: _value(value), _cache(), _ttl(0), _reset_ttl(64) {}
+    explicit KnobNode(std::atomic<T>* value) noexcept: _value(value) {}
 
     void tick(std::span<iv::MidiMessage const> const&) noexcept override {
-        if (_ttl == 0) {
-            _ttl = _reset_ttl;
-            _cache = _value->load();
-        }
-        _output.push(_cache);
-        --_ttl;
+        _output.push(_value->load());
     }
 
     std::span<iv::OutputPort const> outputs_impl() const noexcept override { return { &_output, 1 }; }
@@ -146,7 +138,7 @@ void IntravenousAudioProcessor::init_graph() {
 
         // noise
         auto [noise, noise_id] = midi_graph.add_node<iv::MultiplyNode>(2);
-        midi_graph.connect({ noise_generator_id, 0 }, { noise_id, 0 });
+        midi_graph.connect({ noise_generator_id, 0 },  { noise_id, 0 });
         midi_graph.connect({ noise_level_knob_id, 0 }, { noise_id, 1 });
 
         // knobs
@@ -157,8 +149,8 @@ void IntravenousAudioProcessor::init_graph() {
         // out
         auto [amplitude, amplitude_id] = midi_graph.add_node<iv::MultiplyNode>(2);
         midi_graph.connect({ midi_graph_id, midi_left->get_amplitude_port() }, { amplitude_id, 0 });
-        midi_graph.connect({ warper_id, 0 }, { amplitude_id, 1 });
-        midi_graph.connect({ amplitude_id, 0 }, { midi_graph_id, midi_left->get_output_port()});
+        midi_graph.connect({ warper_id, 0 },                                   { amplitude_id, 1 });
+        midi_graph.connect({ amplitude_id, 0 }, { midi_graph_id, midi_left->get_output_port() });
     }
 
     auto [midi_right, midi_right_id] = graph.add_node<iv::MidiNode>();
@@ -283,7 +275,8 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
 
         _graph->tick({ midi_buffer.data(), buffer_size});
         for (size_t channel = 0; channel < channels; ++channel) {
-            write_buffer[channel][sample_index] = _graph->outputs()[channel].back();
+            auto& output = _graph->outputs()[channel];
+            write_buffer[channel][sample_index] = output.back();
         }
     }
 }

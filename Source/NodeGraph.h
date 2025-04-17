@@ -83,6 +83,7 @@ namespace iv {
             _buffer.push_back(default_value);
             _buffer.shrink_to_fit();
         }
+        ~InputPort() = default;
 
         explicit InputPort(InputPort const&) = delete;
         explicit InputPort(InputPort&& other) noexcept {
@@ -112,7 +113,7 @@ namespace iv {
 
         void add_latency(size_t latency) noexcept {
             _latency += latency;
-            _buffer.assign(size_t(1) << size_t(std::ceil(std::log2(latency + 1))), _default);
+            _buffer.assign(size_t(1) << size_t(std::ceil(std::log2(_latency + 1))), _default);
             _buffer.shrink_to_fit();
         }
 
@@ -269,7 +270,7 @@ namespace iv {
             _out_aliased.push(sample_warped);
 
             Sample sample_warped_aa = sample_warped;
-            if (warped) {
+            if (false) {
                 Sample delta = (sample - sample_prev) / 2.0;
                 sample_warped_aa -= polyblep_error(sample_warped_aa, delta, threshold, PolyblepSide::RIGHT);
                 _out.update(sample_prev - polyblep_error(sample_prev, delta, threshold, PolyblepSide::LEFT));
@@ -326,88 +327,136 @@ namespace iv {
             _public_ins(_private_outs.size()),
             _public_outs(_private_ins.size())
         {
-            topological_sort_with_cycles();
+            pseudo_topological_sort();
             init_buffers();
         }
 
     private:
-        /*  ▄▄▄▄▄  Graph::topological_sort_with_cycles  ▄▄▄▄▄
-            Visits every node exactly once in *breadth‑first*
-            order, starting from the nodes that are reached
-            first when you fan‑out from the graph’s external
-            outputs, as well as nodes with no inupts.
-        */
-        void topological_sort_with_cycles() {
+        void pseudo_topological_sort() {
             const size_t n = _nodes.size();
 
-            /* — map every InputPort* back to its owner node index — */
-            // note: do not include this graph so we do not cross the boundary of the graph itself
-            std::unordered_map<InputPort*, size_t> owner;
+            std::unordered_map<InputPort*, size_t> owner_of;
             for (size_t i = 0; i < n; ++i) {
                 for (auto& in : _nodes[i]->inputs()) {
-                    owner[&in] = i;
+                    owner_of[&in] = i;
                 }
             }
 
-            std::unordered_map<InputPort*, OutputPort*> connections;
+            std::unordered_map<InputPort*, size_t> parent_of;
             for (size_t i = 0; i < n; ++i) {
                 for (auto& out : _nodes[i]->outputs()) {
                     for (auto const dst : out.fan) {
-                        connections[dst] = &out;
+                        parent_of[dst] = i;
                     }
                 }
             }
 
-            /* — breadth‑first order — */
-            std::deque<size_t> queue;
-
-            /* 1. seed with every node with all inputs deconnected (true sources) */
-            for (size_t i = 0; i < n; ++i) {
-                bool is_source = true;
-                for (auto& in : _nodes[i]->inputs()) {
-                    if (connections.contains(&in)) {
-                        is_source = false;
-                        break;
+            auto make_heads_queue = [&]() {
+                std::deque<size_t> queue;
+                for (size_t i = 0; i < n; ++i) {
+                    bool all_inputs_disconnected = true;
+                    for (auto& in : _nodes[i]->inputs()) {
+                        if (parent_of.contains(&in)) {
+                            all_inputs_disconnected = false;
+                            break;
+                        }
+                    }
+                    if (!all_inputs_disconnected) continue;
+                    queue.push_back(i);
+                }
+                for (auto& out : _private_outs) {
+                    for (auto& dst : out.fan) {
+                        if (!owner_of.contains(dst)) continue;
+                        size_t child = owner_of[dst];
+                        queue.push_back(child);
                     }
                 }
-                if (!is_source) continue;
-                queue.push_back(i);
-            }
+                return queue;
+            };
 
-            /* 2. seed with nodes that read directly from *graph* inputs
-                  (i.e. any consumer of an OutputPort in `private_outs`)          */
-            for (auto& out : _private_outs) {
-                for (auto* dst : out.fan) {
-                    if (auto it = owner.find(dst); it != owner.end()) {
-                        queue.push_back(it->second);
+            std::vector<std::unordered_set<size_t>> cyclic_parents_of(n);
+            {
+                auto queue = make_heads_queue();
+                std::vector<bool> seen(n, false);
+                while (!queue.empty()) {
+                    size_t i = queue.front();
+                    queue.pop_front();
+                    if (seen[i]) continue;
+                    seen[i] = true;
+
+                    std::vector<bool> inner_seen(n, false);
+                    std::deque<size_t> inner_queue;
+                    inner_queue.push_back(i);
+
+                    while (!inner_queue.empty()) {
+                        size_t node = inner_queue.front();
+                        inner_queue.pop_front();
+                        if (inner_seen[node]) continue;
+                        inner_seen[node] = true;
+
+                        for (auto& out : _nodes[node]->outputs()) {
+                            for (auto& dst : out.fan) {
+                                if (!owner_of.contains(dst)) continue;
+                                size_t child = owner_of[dst];
+                                if (!cyclic_parents_of[node].empty()) continue;
+                                if (child == i) cyclic_parents_of[i].insert(node);
+                                inner_queue.push_back(child);
+                            }
+                        }
+                    }
+
+                    for (auto& out : _nodes[i]->outputs()) {
+                        for (auto& dst : out.fan) {
+                            if (!owner_of.contains(dst)) continue;
+                            size_t child = owner_of[dst];
+                            queue.push_back(child);
+                        }
                     }
                 }
             }
 
-            std::vector<bool> seen(n, false);
-            std::vector<std::unique_ptr<Node>> sorted;
+            auto queue = make_heads_queue();
+            std::vector<bool> placed(n, false);
+            std::vector<size_t> sorted;
             sorted.reserve(n);
 
             while (!queue.empty()) {
                 size_t node = queue.front();
                 queue.pop_front();
+                if (placed[node]) continue;
 
-                if (seen[node]) continue;           // already scheduled via another path
-                seen[node] = true;
-
-                /* push every consumer of v */
-                for (auto& out : _nodes[node]->outputs()) {                 // for each output of the node
-                    for (auto* dst : out.fan) {                             // for each input connected to the output
-                        if (auto it = owner.find(dst); it != owner.end()) { // get the node the input is from
-                            size_t child = it->second;
-                            if (!seen[child]) queue.push_back(child);       // chad node, we keep those
-                        }
+                bool all_dependencies_satisfied = true;
+                for (auto& in : _nodes[node]->inputs()) {
+                    if (!parent_of.contains(&in)) continue;
+                    size_t parent = parent_of[&in];
+                    if (!placed[parent] && !cyclic_parents_of[node].contains(parent)) {
+                        all_dependencies_satisfied = false;
+                        break;
                     }
                 }
-                sorted.emplace_back(std::move(_nodes[node]));
+                
+                if (all_dependencies_satisfied) {
+                    for (auto& out : _nodes[node]->outputs()) {
+                        for (auto& dst : out.fan) {
+                            if (!owner_of.contains(dst)) continue;
+                            size_t child = owner_of[dst];
+                            queue.push_back(child);
+                        }
+                    }
+                    sorted.push_back(node);
+                    placed[node] = true;
+                }
+                else {
+                    queue.push_back(node);
+                }
             }
-
-            _nodes.swap(sorted);   // new deterministic execution order, cycles allowed
+            
+            std::vector<std::unique_ptr<Node>> sorted_nodes;
+            sorted_nodes.reserve(n);
+            for (size_t i : sorted) {
+                sorted_nodes.push_back(std::move(_nodes[i]));
+            }
+            _nodes.swap(sorted_nodes);
         }
 
         void init_buffers() {
@@ -453,35 +502,34 @@ namespace iv {
         }
 
         size_t inner_latency() const noexcept override {
-            std::unordered_map<InputPort const*, size_t> arrival;
-            size_t graph_latency = 0;
+            std::unordered_map<InputPort const*, size_t> input_global_latencies;
+            size_t max_latency = 0;
 
-            for (auto const& node : _nodes) {
-                size_t here = 0;
-                for (auto const& in : node->inputs()) {
-                    here = std::max(here, arrival[&in]);
+            for (size_t node_idx = 0; node_idx < _nodes.size() + 1; ++node_idx) {
+                // node_idx == _nodes.size() means this graph
+                auto node = (node_idx < _nodes.size())
+                    ? _nodes[node_idx].get()
+                    : this;
+                auto node_inputs = (node_idx < _nodes.size())
+                    ? const_cast<Node const*>(_nodes[node_idx].get())->inputs()
+                    : _private_ins;
+
+                size_t node_global_latency = 0;
+                for (auto& in : node_inputs) {
+                    node_global_latency = std::max(node_global_latency, input_global_latencies[&in]);
                 }
-                here += node->inner_latency();
-                for (auto const& out : node->outputs()) {
-                    size_t out_latency = here + out.latency();
-                    for (auto* dst : out.fan) {
-                        arrival[dst] = std::max(arrival[dst], out_latency);
+                if (node == this) continue;
+                node_global_latency += node->inner_latency();
+                for (auto& out : node->outputs()) {
+                    for (auto& dst : out.fan) {
+                        size_t new_latency = node_global_latency + out.latency();
+                        max_latency = std::max(max_latency, new_latency);
+                        input_global_latencies[dst] = new_latency;
                     }
                 }
             }
 
-            for (auto const& sink : _private_ins) {
-                graph_latency = std::max(graph_latency, arrival[&sink]);
-            }
-            for (auto const& node : _nodes) {
-                if (node->outputs().empty()) {
-                    for (auto const& sink : node->inputs()) {
-                        graph_latency = std::max(graph_latency, arrival[&sink]);
-                    }
-                }
-            }
-
-            return graph_latency;
+            return max_latency;
         }
 
         std::span<InputPort const> inputs_impl() const noexcept override { return _public_ins; }
@@ -748,7 +796,7 @@ namespace iv {
                 }
                 else if (auto last_output = graph->outputs()[0].back(); last_output <= silence_threshold && last_output >= -silence_threshold) {
                     _active_voices.erase(_active_voices.begin() + i);
-                    --i; // underflows then overflows for first voice but should be fine
+                    --i; // underflows then overflows for i=0 but should be fine
                     continue;
                 }
 
