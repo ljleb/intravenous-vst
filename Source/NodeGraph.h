@@ -17,30 +17,29 @@ enum struct PolyblepSide {
 };
 
 static float polyblep_phi(float const& sample, float const& warp_threshold) {
-    auto const res = (sample / warp_threshold + 1.f) / 2.f;
-    if (!std::isfinite(res)) return 0.5;
+    auto const res = (sample + warp_threshold) / 2.f;
     return res;
 }
 
-static float polyblep_p(float const& phi, float const& delta, PolyblepSide side) {
+static float polyblep_p(float const& phi, float const& delta, float const& warp_threshold, PolyblepSide side) {
     if (side == PolyblepSide::RIGHT && phi < delta) {
         auto const& first_order = 2.f * phi / delta;
         auto const& second_order = phi / delta;
-        return first_order - second_order * second_order - 1;
+        return (first_order - second_order * second_order - 1) * warp_threshold;
     }
-    if (side == PolyblepSide::LEFT && 1 - delta <= phi) {
-        auto const& second_order = (phi - 1) / delta + 1;
-        return second_order * second_order;
+    if (side == PolyblepSide::LEFT && delta > warp_threshold - phi) {
+        auto const& second_order = (phi - warp_threshold) / delta + 1;
+        return second_order * second_order * warp_threshold;
     }
     return 0;
 }
 
 static float polyblep_error(float sample, float delta, float warp_threshold, PolyblepSide side) {
     float sign = 1.f - std::signbit(delta) * 2.f;
-    delta = std::abs(delta) / warp_threshold;
+    delta = std::abs(delta);
 
     float const phi = polyblep_phi(sample, warp_threshold);
-    float const p = polyblep_p(phi, delta, side) * warp_threshold * sign;
+    float const p = polyblep_p(phi, delta, warp_threshold, side) * sign;
     return p;
 }
 
@@ -75,7 +74,7 @@ namespace iv {
     /* ─────────────  Ports  ───────────── */
     struct InputPort {
         std::vector<Sample> _buffer;
-        size_t _write_idx{0};
+        size_t _index{0};
         Sample _default;
         size_t _latency;
 
@@ -93,21 +92,24 @@ namespace iv {
         InputPort& operator=(InputPort const&) = delete;
         InputPort& operator=(InputPort&& other) noexcept {
             _buffer = std::move(other._buffer);
-            _write_idx = other._write_idx;
+            _index = other._index;
             return *this;
         }
 
-        Sample next() noexcept {
-            _write_idx = (_write_idx + 1) & (_buffer.size() - 1);  // buffer size is a power of 2
-            Sample v = _buffer[_write_idx];
-            _buffer[_write_idx] = 0.f;
-            return v;
+        Sample get(size_t offset = 0) noexcept {
+            if (offset > _latency) return 0.0;
+            size_t idx = (_index + _buffer.size() + offset) & (_buffer.size() - 1);  // buffer size is a power of 2
+            return _buffer[idx];
+        }
+
+        void push(Sample value) noexcept {
+            _index = (_index + 1) & (_buffer.size() - 1);  // buffer size is a power of 2
+            update(value);
         }
 
         void update(Sample value, size_t offset = 0) noexcept {
-            // update the current position in the buffer
-            // offset brings the write head closer to a real time update
-            size_t idx = (_write_idx + _buffer.size() - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
+            if (offset > _latency) return;
+            size_t idx = (_index + _buffer.size() + _latency - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
             _buffer[idx] = value;
         }
 
@@ -140,28 +142,27 @@ namespace iv {
             in->add_latency(_latency);
         }
 
-        void push(Sample v) noexcept {
-            next();
-            update(v);
+        void push(Sample value) noexcept {
+            _index = (_index + 1) & (_buffer.size() - 1);  // buffer size is a power of 2
+            size_t idx = (_index + _buffer.size() + _latency) & (_buffer.size() - 1);  // buffer size is a power of 2
+            _buffer[idx] = value;
+            for (auto* dst : fan) {
+                dst->push(value);
+            }
         }
 
         void update(Sample value, size_t offset = 0) noexcept {
             if (offset > _latency) return;
-            size_t idx = (_index + _buffer.size() - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
+            size_t idx = (_index + _buffer.size() + _latency - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
             _buffer[idx] = value;
             for (auto* dst : fan) {
                 dst->update(value, offset);
             }
         }
 
-        void next() noexcept {
-            _index = (_index + 1) & (_buffer.size() - 1);  // buffer size is a power of 2
-            _buffer[_index] = 0;
-        }
-
-        Sample back(size_t offset = 0) const noexcept {
-            if (offset > _latency) return 0;
-            size_t idx = (_index + _buffer.size() - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
+        Sample get(size_t offset = 0) const noexcept {
+            if (offset > _latency) return 0.0;
+            size_t idx = (_index + _buffer.size() + offset) & (_buffer.size() - 1);  // buffer size is a power of 2
             return _buffer[idx];
         }
 
@@ -216,7 +217,7 @@ namespace iv {
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
             Sample result = 0.0;
             for (auto& in : _ins) {
-                result += in.next();
+                result += in.get();
             }
             _out.push(result);
         }
@@ -234,7 +235,7 @@ namespace iv {
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
             Sample result = 1.0;
             for (auto& in : _ins) {
-                result *= in.next();
+                result *= in.get();
             }
             _out.push(result);
         }
@@ -248,7 +249,7 @@ namespace iv {
 
     public:
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
-            _out.push(_in_velocity.next() / _in_sample_rate.next() + _in_previous.next());
+            _out.push(_in_velocity.get() / _in_sample_rate.get() + _in_previous.get());
         }
         std::span<InputPort const> inputs_impl() const noexcept override { return { &_in_velocity, 3 }; }
         std::span<OutputPort const> outputs_impl() const noexcept override { return { &_out, 1 }; }
@@ -259,9 +260,9 @@ namespace iv {
         OutputPort _out{1}, _out_aliased;
 
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
-            Sample threshold = _in_threshold.next();
-            Sample sample_prev = _out_aliased.back();
-            Sample sample = _in.next();
+            Sample threshold = _in_threshold.get();
+            Sample sample_prev = _out_aliased.get();
+            Sample sample = _in.get();
             Sample sample_warped = sample;
             bool warped = false;
             
@@ -270,10 +271,10 @@ namespace iv {
             _out_aliased.push(sample_warped);
 
             Sample sample_warped_aa = sample_warped;
-            if (false) {
+            if (warped) {
                 Sample delta = (sample - sample_prev) / 2.0;
-                sample_warped_aa -= polyblep_error(sample_warped_aa, delta, threshold, PolyblepSide::RIGHT);
                 _out.update(sample_prev - polyblep_error(sample_prev, delta, threshold, PolyblepSide::LEFT));
+                sample_warped_aa -= polyblep_error(sample_warped_aa, delta, threshold, PolyblepSide::RIGHT);
             }
             _out.push(sample_warped_aa);
         }
@@ -491,13 +492,13 @@ namespace iv {
     public:
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
             for (size_t i = 0; i < _private_outs.size(); ++i) {
-                _private_outs[i].push(_public_ins[i].next());
+                _private_outs[i].push(_public_ins[i].get());
             }
             for (auto& node : _nodes) {
                 node->tick(midi);
             }
             for (size_t i = 0; i < _private_ins.size(); ++i) {
-                _public_outs[i].push(_private_ins[i].next());
+                _public_outs[i].push(_private_ins[i].get());
             }
         }
 
@@ -768,7 +769,7 @@ namespace iv {
         }
 
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
-            auto silence_threshold = in_silence_threshold.next();
+            auto silence_threshold = in_silence_threshold.get();
 
             for (auto const& midi_message : midi) {
                 if (midi_message.type == MidiMessageType::NOTE_ON) {
@@ -794,7 +795,7 @@ namespace iv {
                 else if (note_state.ttl) {
                     --note_state.ttl;
                 }
-                else if (auto last_output = graph->outputs()[0].back(); last_output <= silence_threshold && last_output >= -silence_threshold) {
+                else if (auto last_output = graph->outputs()[0].get(); last_output <= silence_threshold && last_output >= -silence_threshold) {
                     _active_voices.erase(_active_voices.begin() + i);
                     --i; // underflows then overflows for i=0 but should be fine
                     continue;
@@ -804,7 +805,7 @@ namespace iv {
                 graph_inputs[0].update(note_number_to_frequency(note_number));
                 graph_inputs[1].update(note_state.amplitude / 127.0);
                 graph->tick(midi);
-                result += graph->outputs()[0].back();
+                result += graph->outputs()[0].get();
             }
             out_mix.push(result);
         }

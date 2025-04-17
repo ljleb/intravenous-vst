@@ -276,7 +276,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
         _graph->tick({ midi_buffer.data(), buffer_size});
         for (size_t channel = 0; channel < channels; ++channel) {
             auto& output = _graph->outputs()[channel];
-            write_buffer[channel][sample_index] = output.back();
+            write_buffer[channel][sample_index] = output.get();
         }
     }
 }
