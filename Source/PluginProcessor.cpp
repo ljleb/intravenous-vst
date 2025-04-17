@@ -155,7 +155,10 @@ void IntravenousAudioProcessor::init_graph() {
         midi_graph.connect({ noise_id, 0 }, { warper_id, 0 });
 
         // out
-        midi_graph.connect({ warper_id, 0 }, { midi_graph_id, midi_left->get_output_port()});
+        auto [amplitude, amplitude_id] = midi_graph.add_node<iv::MultiplyNode>(2);
+        midi_graph.connect({ midi_graph_id, midi_left->get_amplitude_port() }, { amplitude_id, 0 });
+        midi_graph.connect({ warper_id, 0 }, { amplitude_id, 1 });
+        midi_graph.connect({ amplitude_id, 0 }, { midi_graph_id, midi_left->get_output_port()});
     }
 
     auto [midi_right, midi_right_id] = graph.add_node<iv::MidiNode>();
@@ -263,7 +266,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
                 break;
             }
             else if (midi_message.isNoteOff() || midi_message.isNoteOn() && midi_message.getVelocity() == 0) {
-                iv::MidiMessage iv_midi_message{ .type = iv::MidiMessageType::NOTE_OFF };
+                iv::MidiMessage iv_midi_message { .type = iv::MidiMessageType::NOTE_OFF };
                 iv_midi_message.note_on.amplitude = midi_message.getVelocity();
                 iv_midi_message.note_on.note_number = midi_message.getNoteNumber();
                 midi_buffer[i] = iv_midi_message;

@@ -40,10 +40,13 @@ static float polyblep_error(float sample, float delta, float warp_threshold, Pol
     delta = std::abs(delta) / warp_threshold;
 
     float const phi = polyblep_phi(sample, warp_threshold);
-    if (!std::isfinite(phi)) return 0.f;
     float const p = polyblep_p(phi, delta, side) * warp_threshold * sign;
-    if (!std::isfinite(p)) return 0.f;
     return p;
+}
+
+static inline float warp_pm1(float x, float limit) noexcept {
+    const float period = 2 * limit;
+    return x - std::floor((x + limit) / period) * period;
 }
 
 namespace iv {
@@ -74,9 +77,11 @@ namespace iv {
         std::vector<Sample> _buffer;
         size_t _write_idx{0};
         Sample _default;
+        size_t _latency;
 
-        explicit InputPort(Sample default_value = 0.0) noexcept: _default(default_value) {
+        explicit InputPort(Sample default_value = 0.0) noexcept: _default(default_value), _latency(0) {
             _buffer.push_back(default_value);
+            _buffer.shrink_to_fit();
         }
 
         explicit InputPort(InputPort const&) = delete;
@@ -92,7 +97,7 @@ namespace iv {
         }
 
         Sample next() noexcept {
-            _write_idx = (_write_idx + 1) % _buffer.size();
+            _write_idx = (_write_idx + 1) & (_buffer.size() - 1);  // buffer size is a power of 2
             Sample v = _buffer[_write_idx];
             _buffer[_write_idx] = 0.f;
             return v;
@@ -101,17 +106,18 @@ namespace iv {
         void update(Sample value, size_t offset = 0) noexcept {
             // update the current position in the buffer
             // offset brings the write head closer to a real time update
-            size_t idx = (_write_idx + _buffer.size() - offset) % _buffer.size();
+            size_t idx = (_write_idx + _buffer.size() - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
             _buffer[idx] = value;
         }
 
         void add_latency(size_t latency) noexcept {
-            _buffer.assign(_buffer.size() + latency, _default);
+            _latency += latency;
+            _buffer.assign(size_t(1) << size_t(std::ceil(std::log2(latency + 1))), _default);
             _buffer.shrink_to_fit();
         }
 
         size_t get_latency() const noexcept {
-            return _buffer.size() - 1;
+            return _latency;
         }
     };
 
@@ -121,7 +127,11 @@ namespace iv {
         std::vector<Sample> _buffer;
         size_t _index;
 
-        explicit OutputPort(size_t latency = 0) noexcept: _latency(latency), _buffer(latency + 1), _index(0) {}
+        explicit OutputPort(size_t latency = 0) noexcept :
+            _latency(latency),
+            _buffer(size_t(1) << size_t(std::ceil(std::log2(latency + 1)))),
+            _index(0)
+        {}
 
         void connect_to(InputPort* in) {
             assert(in->get_latency() == 0);
@@ -136,7 +146,7 @@ namespace iv {
 
         void update(Sample value, size_t offset = 0) noexcept {
             if (offset > _latency) return;
-            size_t idx = (_index + _buffer.size() - offset) % _buffer.size();
+            size_t idx = (_index + _buffer.size() - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
             _buffer[idx] = value;
             for (auto* dst : fan) {
                 dst->update(value, offset);
@@ -144,13 +154,13 @@ namespace iv {
         }
 
         void next() noexcept {
-            _index = (_index + 1) % _buffer.size();
+            _index = (_index + 1) & (_buffer.size() - 1);  // buffer size is a power of 2
             _buffer[_index] = 0;
         }
 
         Sample back(size_t offset = 0) const noexcept {
             if (offset > _latency) return 0;
-            size_t idx = (_index + _buffer.size() - offset) % _buffer.size();
+            size_t idx = (_index + _buffer.size() - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
             return _buffer[idx];
         }
 
@@ -193,13 +203,6 @@ namespace iv {
             return {};
         }
     };
-
-    /* ─────────────  Helpers  ───────────── */
-    static inline Sample warp_pm1(Sample x, Sample threshold) {
-        if (x > threshold)  return std::fmod(x + threshold, 2 * threshold) - threshold;
-        if (x < -threshold) return -std::fmod(-x + threshold, 2 * threshold) + threshold;
-        return x;
-    }
 
     /* ─────────────  Concrete nodes  ───────────── */
     class SumNode : public Node {
@@ -292,12 +295,12 @@ namespace iv {
     };
 
     class UniformNoiseNode : public Node {
+        std::mt19937 _generator{std::random_device{}()};
+        std::uniform_real_distribution<Sample> _distribution{-1.0f,1.0f};
         OutputPort _output;
 
-        void tick(std::span<MidiMessage const> const& midi) noexcept override {
-            std::mt19937 generator(std::random_device{}());
-            std::uniform_real_distribution<Sample> distribution(-1.0, 1.0);
-            _output.push(distribution(generator));
+        void tick(std::span<MidiMessage const> const&) noexcept override {
+            _output.push(_distribution(_generator));
         }
 
         std::span<OutputPort const> outputs_impl() const noexcept override { return { &_output, 1 }; }
@@ -701,6 +704,7 @@ namespace iv {
 
         std::array<std::unique_ptr<Node>, MAX_MIDI_NOTES> _graphs;
         std::array<MidiNoteState, MAX_MIDI_NOTES> _note_states;
+        std::vector<uint8_t> _active_voices;
         size_t _max_ttl;
         InputPort in_silence_threshold;
         OutputPort out_mix;
@@ -712,6 +716,7 @@ namespace iv {
                 _graphs[i] = voice_factory.create();
             }
             _max_ttl = dynamic_cast<Graph*>(_graphs[0].get())->inner_latency();
+            _active_voices.reserve(MAX_MIDI_NOTES);
         }
 
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
@@ -722,6 +727,7 @@ namespace iv {
                     auto& note_state = _note_states[midi_message.note_on.note_number];
                     note_state.amplitude = midi_message.note_on.amplitude;
                     note_state.ttl = _max_ttl;
+                    _active_voices.push_back(midi_message.note_on.note_number);
                 }
                 if (midi_message.type == MidiMessageType::NOTE_OFF) {
                     auto& note_state = _note_states[midi_message.note_off.note_number];
@@ -730,19 +736,21 @@ namespace iv {
             }
 
             Sample result = 0.0;
-            for (size_t note_number = 0; note_number < MAX_MIDI_NOTES; ++note_number) {
+            for (size_t i = 0; i < _active_voices.size(); ++i) {
+                uint8_t note_number = _active_voices[i];
                 auto& note_state = _note_states[note_number];
-                if (!note_state.ttl) continue;
-
                 auto& graph = _graphs[note_number];
-                auto graph_last_out = graph->outputs()[0].back();
                 if (note_state.amplitude) {
                     note_state.ttl = _max_ttl;
                 }
                 else if (note_state.ttl) {
                     --note_state.ttl;
                 }
-                else if (graph_last_out <= silence_threshold && graph_last_out >= -silence_threshold) continue;
+                else if (auto last_output = graph->outputs()[0].back(); last_output <= silence_threshold && last_output >= -silence_threshold) {
+                    _active_voices.erase(_active_voices.begin() + i);
+                    --i; // underflows then overflows for first voice but should be fine
+                    continue;
+                }
 
                 auto const graph_inputs = graph->inputs();
                 graph_inputs[0].update(note_number_to_frequency(note_number));
