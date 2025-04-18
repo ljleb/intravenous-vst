@@ -72,15 +72,21 @@ namespace iv {
 
     /* ─────────────  Ports  ───────────── */
     struct InputPort {
-        std::vector<Sample> _buffer;
-        size_t _index{0};
         Sample _default;
+        size_t _history;
         size_t _latency;
+        std::vector<Sample> _buffer;
+        size_t _index;
 
-        explicit InputPort(Sample default_value = 0.0) noexcept: _default(default_value), _latency(0) {
-            _buffer.push_back(default_value);
-            _buffer.shrink_to_fit();
+        explicit InputPort(size_t history = 0, Sample default_value = 0.0) noexcept :
+            _default(default_value),
+            _history(history),
+            _latency(0),
+            _index(0)
+        {
+            add_latency(0);  // init buffer
         }
+
         ~InputPort() = default;
 
         explicit InputPort(InputPort const&) = delete;
@@ -93,13 +99,14 @@ namespace iv {
             _buffer = std::move(other._buffer);
             _index = other._index;
             _default = other._default;
+            _history = other._history;
             _latency = other._latency;
             return *this;
         }
 
         Sample get(size_t offset = 0) noexcept {
-            if (offset > _latency) return 0.0;
-            size_t idx = (_index + _buffer.size() + offset) & (_buffer.size() - 1);  // buffer size is a power of 2
+            if (offset > _history) return 0.0;
+            size_t idx = (_index + _buffer.size() - offset) & (_buffer.size() - 1);  // buffer size is a power of 2
             return _buffer[idx];
         }
 
@@ -116,7 +123,8 @@ namespace iv {
 
         void add_latency(size_t latency) noexcept {
             _latency += latency;
-            _buffer.assign(size_t(1) << size_t(std::ceil(std::log2(_latency + 1))), _default);
+            size_t min_buffer_size = _latency + _history + 1;
+            _buffer.assign(size_t(1) << size_t(std::ceil(std::log2(min_buffer_size))), _default);
             _buffer.shrink_to_fit();
         }
 
@@ -167,7 +175,7 @@ namespace iv {
             return _buffer[idx];
         }
 
-        size_t latency() const noexcept {
+        size_t get_latency() const noexcept {
             return _latency;
         }
     };
@@ -245,7 +253,7 @@ namespace iv {
     };
 
     class IntegratorNode : public Node {
-        InputPort _in_velocity, _in_previous, _in_sample_rate{44100};
+        InputPort _in_velocity, _in_previous, _in_sample_rate{0, 44100};
         OutputPort _out;
 
     public:
@@ -258,7 +266,7 @@ namespace iv {
 
     struct WarperNode : public Node {
         InputPort _in, _in_threshold;
-        OutputPort _out{1}, _out_aliased;
+        OutputPort _out{ 1 }, _out_aliased;
 
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
             Sample threshold = _in_threshold.get();
@@ -266,7 +274,7 @@ namespace iv {
             Sample sample = _in.get();
             Sample sample_warped = sample;
             bool warped = false;
-            
+
             if (sample > threshold) { sample_warped = warp_pm1(sample, threshold); warped = true; }
             else if (sample < -threshold) { sample_warped = warp_pm1(sample, threshold); warped = true; }
             _out_aliased.push(sample_warped);
@@ -281,6 +289,27 @@ namespace iv {
         }
         std::span<InputPort const> inputs_impl() const noexcept override { return { &_in, 2 }; }
         std::span<OutputPort const> outputs_impl() const noexcept override { return { &_out, 2 }; }
+    };
+
+    struct IirFilterNode : public Node {
+        InputPort
+            _in{4},
+            _inw[4] = { InputPort(0, 1.0), InputPort(), InputPort(), InputPort() },
+            _outw[3] = { InputPort(), InputPort(), InputPort() };
+        OutputPort _out{3};
+
+        void tick(std::span<MidiMessage const> const& midi) noexcept override {
+            Sample weighted_sum = 0.0;
+            for (size_t i = 0; i < sizeof(_inw) / sizeof(InputPort); ++i) {
+                weighted_sum += _in.get(i) * _inw[i].get();
+            }
+            for (size_t i = 0; i < sizeof(_outw) / sizeof(InputPort); ++i) {
+                weighted_sum += _out.get(i) * _outw[i].get();
+            }
+            _out.push(weighted_sum);
+        }
+        std::span<InputPort const> inputs_impl() const noexcept override { return { &_in, 1 + (sizeof(_inw) + sizeof(_outw)) / sizeof(InputPort)}; }
+        std::span<OutputPort const> outputs_impl() const noexcept override { return { &_out, 1 }; }
     };
 
     class ConstantNode : public Node {
@@ -484,7 +513,7 @@ namespace iv {
                 node_global_latency += node->inner_latency();
                 for (auto& out : node->outputs()) {
                     for (auto& dst : out.fan) {
-                        input_global_latencies[dst] = node_global_latency + out.latency();
+                        input_global_latencies[dst] = node_global_latency + out.get_latency();
                     }
                 }
             }
@@ -524,7 +553,7 @@ namespace iv {
                 node_global_latency += node->inner_latency();
                 for (auto& out : node->outputs()) {
                     for (auto& dst : out.fan) {
-                        size_t new_latency = node_global_latency + out.latency();
+                        size_t new_latency = node_global_latency + out.get_latency();
                         max_latency = std::max(max_latency, new_latency);
                         input_global_latencies[dst] = new_latency;
                     }
@@ -988,7 +1017,7 @@ namespace iv {
         }
 
         // returns [midi port id, voice port id]
-        std::tuple<PortId, PortId> add_extra_input_port() noexcept {
+        std::tuple<PortId, PortId> add_forwarding_input_port() noexcept {
             PortId midi_id = _num_extra_public_inputs++;
             PortId voice_id = _voice_factory.add_input_port();
             return std::make_tuple(midi_id + MidiNode::BASE_INPUTS, voice_id);

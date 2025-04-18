@@ -7,6 +7,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
 
     std::atomic<float>* _warp_threshold;
     std::atomic<float>* _noise_level;
+    std::atomic<float>* _iir_outw0;
 
     std::unique_ptr<iv::Graph> _graph;
     iv::PortId _left_port, _right_port;
@@ -17,6 +18,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
 public:
     static juce::String const WARP_THRESHOLD_ID;
     static juce::String const NOISE_LEVEL_ID;
+    static juce::String const IIR_OUTW0_ID;
 
     IntravenousAudioProcessor();
     ~IntravenousAudioProcessor() override;

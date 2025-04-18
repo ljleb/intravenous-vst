@@ -4,6 +4,7 @@
 
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_ID = "warp_threshold";
 juce::String const IntravenousAudioProcessor::NOISE_LEVEL_ID = "noise_level";
+juce::String const IntravenousAudioProcessor::IIR_OUTW0_ID = "iir_outw0";
 
 IntravenousAudioProcessor::IntravenousAudioProcessor():
     #ifndef JucePlugin_PreferredChannelConfigurations
@@ -28,10 +29,16 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
                 "Noise Level",
                 juce::NormalisableRange<float>(0.f, 0.1f, .0001f),
                 0.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                IIR_OUTW0_ID,
+                "IIR Out Weight 0",
+                juce::NormalisableRange<float>(-1.f, 1.f, .0001f),
+                0.f),
         }
     },
     _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_ID)),
-    _noise_level(_value_tree_state.getRawParameterValue(NOISE_LEVEL_ID))
+    _noise_level(_value_tree_state.getRawParameterValue(NOISE_LEVEL_ID)),
+    _iir_outw0(_value_tree_state.getRawParameterValue(IIR_OUTW0_ID))
 {
     init_graph();
 }
@@ -117,6 +124,7 @@ void IntravenousAudioProcessor::init_graph() {
 
     auto [sample_rate, sample_rate_id] = graph.add_node<SampleRateNode>(this);
     auto [warp_threshold_knob, warp_threshold_knob_id] = graph.add_node<KnobNode<float>>(_warp_threshold);
+    auto [iir_outw0_knob, iir_outw0_knob_id] = graph.add_node<KnobNode<float>>(_iir_outw0);
     auto [noise_generator, noise_generator_id] = graph.add_node<iv::UniformNoiseNode>();
 
     // noise
@@ -128,39 +136,46 @@ void IntravenousAudioProcessor::init_graph() {
     auto [midi, midi_id] = graph.add_node<iv::MidiNode>();
 
     // shared inputs
-    auto [midi_noise_generator_port, voice_noise_generator_port] = midi->add_extra_input_port();
-    auto [midi_sample_rate_port, voice_sample_rate_port] = midi->add_extra_input_port();
-    auto [midi_warp_threshold_port, voice_warp_threshold_port] = midi->add_extra_input_port();
+    auto [midi_noise_generator_port, voice_noise_generator_port] = midi->add_forwarding_input_port();
+    auto [midi_sample_rate_port, voice_sample_rate_port] = midi->add_forwarding_input_port();
+    auto [midi_warp_threshold_port, voice_warp_threshold_port] = midi->add_forwarding_input_port();
+    auto [midi_iir_outw0_port, voice_iir_outw0_port] = midi->add_forwarding_input_port();
     graph.connect({ noise_id, 0 }, { midi_id, midi_noise_generator_port });
     graph.connect({ sample_rate_id, 0 }, { midi_id, midi_sample_rate_port });
     graph.connect({ warp_threshold_knob_id, 0 }, { midi_id, midi_warp_threshold_port });
+    graph.connect({ iir_outw0_knob_id, 0 }, { midi_id, midi_iir_outw0_port });
 
     // midi voice
     {
-        auto midi_voice_id = iv::NodeFactory<iv::Graph>::GRAPH_ID;
-        auto& midi_voice = midi->get_voice_factory();
-        auto [integrator, integrator_id] = midi_voice.add_node<iv::IntegratorNode>();
-        auto [warper, warper_id] = midi_voice.add_node<iv::WarperNode>();
+        auto voice_id = iv::NodeFactory<iv::Graph>::GRAPH_ID;
+        auto& voice = midi->get_voice_factory();
+        auto [integrator, integrator_id] = voice.add_node<iv::IntegratorNode>();
+        auto [iir, iir_id] = voice.add_node<iv::IirFilterNode>();
+        auto [warper, warper_id] = voice.add_node<iv::WarperNode>();
+
+        auto [frequency, frequency_id] = voice.add_node<iv::MultiplyNode>(2);
+        auto [frequency_offset, frequency_offset_id] = voice.add_node<iv::ConstantNode>(4.0);
+        voice.connect({ voice_id, midi->get_voice_frequency_port() }, { frequency_id, 0 });
+        voice.connect({ frequency_offset_id, 0 }, { frequency_id, 1 });
+
+        voice.connect({ voice_id, voice_iir_outw0_port }, { iir_id, 5 });
 
         // main loop
-        auto [frequency, frequency_id] = midi_voice.add_node<iv::MultiplyNode>(2);
-        auto [frequency_offset, frequency_offset_id] = midi_voice.add_node<iv::ConstantNode>(4.0);
-        midi_voice.connect({ midi_voice_id, midi->get_voice_frequency_port() }, { frequency_id, 0 });
-        midi_voice.connect({ frequency_offset_id, 0 }, { frequency_id, 1 });
-        midi_voice.connect({ frequency_id, 0 }, { integrator_id, 0 });
-        midi_voice.connect({ integrator_id, 0 }, { warper_id, 0 });
-        midi_voice.connect({ warper_id, 1 }, { integrator_id, 1 });
+        voice.connect({ frequency_id, 0 }, { integrator_id, 0 });
+        //voice.connect({ integrator_id, 0 }, { iir_id, 0 }); voice.connect({ iir_id, 0 }, { warper_id, 0 });
+        voice.connect({ integrator_id, 0 }, { warper_id, 0 });
+        voice.connect({ warper_id, 1 }, { integrator_id, 1 });
 
         // knobs
-        midi_voice.connect({ midi_voice_id, voice_sample_rate_port }, { integrator_id, 2 });
-        midi_voice.connect({ midi_voice_id, voice_noise_generator_port }, { warper_id, 0 });
-        midi_voice.connect({ midi_voice_id, voice_warp_threshold_port }, { warper_id, 1 });
+        voice.connect({ voice_id, voice_sample_rate_port }, { integrator_id, 2 });
+        voice.connect({ voice_id, voice_noise_generator_port }, { warper_id, 0 });
+        voice.connect({ voice_id, voice_warp_threshold_port }, { warper_id, 1 });
 
         // out
-        auto [amplitude, amplitude_id] = midi_voice.add_node<iv::MultiplyNode>(2);
-        midi_voice.connect({ midi_voice_id, midi->get_voice_amplitude_port() }, { amplitude_id, 0 });
-        midi_voice.connect({ warper_id, 0 }, { amplitude_id, 1 });
-        midi_voice.connect({ amplitude_id, 0 }, { midi_voice_id, midi->get_voice_output_port() });
+        auto [amplitude, amplitude_id] = voice.add_node<iv::MultiplyNode>(2);
+        voice.connect({ voice_id, midi->get_voice_amplitude_port() }, { amplitude_id, 0 });
+        voice.connect({ warper_id, 0 }, { amplitude_id, 1 });
+        voice.connect({ amplitude_id, 0 }, { voice_id, midi->get_voice_output_port() });
     }
 
     auto midi_right_id = graph.duplicate_node(midi_id);
