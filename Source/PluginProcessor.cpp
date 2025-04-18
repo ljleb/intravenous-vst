@@ -161,12 +161,12 @@ void IntravenousAudioProcessor::init_graph() {
         voice.connect({ voice_id, voice_iir_outw0_port }, { iir_id, 5 });
 
         // main loop
-        voice.connect({ frequency_id, 0 }, { integrator_id, 0 });
-        //voice.connect({ integrator_id, 0 }, { iir_id, 0 }); voice.connect({ iir_id, 0 }, { warper_id, 0 });
         voice.connect({ integrator_id, 0 }, { warper_id, 0 });
         voice.connect({ warper_id, 1 }, { integrator_id, 1 });
+        //voice.connect({ integrator_id, 0 }, { iir_id, 0 }); voice.connect({ iir_id, 0 }, { warper_id, 0 });
 
         // knobs
+        voice.connect({ frequency_id, 0 }, { integrator_id, 0 });
         voice.connect({ voice_id, voice_sample_rate_port }, { integrator_id, 2 });
         voice.connect({ voice_id, voice_noise_generator_port }, { warper_id, 0 });
         voice.connect({ voice_id, voice_warp_threshold_port }, { warper_id, 1 });

@@ -292,10 +292,7 @@ namespace iv {
     };
 
     struct IirFilterNode : public Node {
-        InputPort
-            _in{4},
-            _inw[4] = { InputPort(0, 1.0), InputPort(), InputPort(), InputPort() },
-            _outw[3] = { InputPort(), InputPort(), InputPort() };
+        InputPort _in{4}, _inw[4], _outw[3];
         OutputPort _out{3};
 
         void tick(std::span<MidiMessage const> const& midi) noexcept override {
@@ -430,7 +427,9 @@ namespace iv {
                                 if (!owner_of.contains(dst)) continue;
                                 size_t child = owner_of[dst];
                                 if (!cyclic_parents_of[node].empty()) continue;
-                                if (child == i) cyclic_parents_of[i].insert(node);
+                                if (child == i) {
+                                    cyclic_parents_of[i].insert(node);
+                                }
                                 inner_queue.push_back(child);
                             }
                         }
