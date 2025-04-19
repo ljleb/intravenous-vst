@@ -13,6 +13,8 @@
 #include <bit>
 #include <type_traits>
 #include <functional>
+#include <bitset>
+#include <variant>
 
 
 namespace constexpr_math {
@@ -193,6 +195,19 @@ namespace iv {
             return _shared_data.buffer[idx];
         }
 
+        constexpr void push(Sample value) noexcept
+        {
+            _shared_data.position = (_shared_data.position + 1) & (_shared_data.buffer.size() - 1);
+            _shared_data.buffer[_shared_data.position] = value;
+        }
+
+        constexpr void update(Sample value, size_t offset = 0) noexcept
+        {
+            if (offset > _shared_data.latency) return;
+            size_t idx = (_shared_data.position + _shared_data.latency - offset) & (_shared_data.buffer.size() - 1);
+            _shared_data.buffer[idx] = value;
+        }
+
         constexpr size_t latency() noexcept
         {
             return _shared_data.latency;
@@ -258,89 +273,47 @@ namespace iv {
 
     namespace details
     {
-        template <typename T>
-        class has_outputs
+        template <typename Node>
+        concept has_outputs = requires(Node node, std::span<OutputConfig> outputs)
         {
-            typedef char one;
-            struct two { char x[2]; };
-
-            template <typename C> static one test(decltype(&C::outputs));
-            template <typename C> static two test(...);
-
-        public:
-            enum { value = sizeof(test<T>(0)) == sizeof(char) };
+            outputs = node.outputs();
         };
 
-        template <typename T>
-        class has_num_outputs
+        template <typename Node>
+        concept has_num_outputs = requires(Node node, size_t num_outputs)
         {
-            typedef char one;
-            struct two { char x[2]; };
-
-            template <typename C> static one test(decltype(&C::num_outputs));
-            template <typename C> static two test(...);
-
-        public:
-            enum { value = sizeof(test<T>(0)) == sizeof(char) };
+            num_outputs = node.num_outputs();
         };
 
-        template <typename T>
-        class has_num_inputs
+        template <typename Node>
+        concept has_inputs = requires(Node node, std::span<InputConfig> inputs)
         {
-            typedef char one;
-            struct two { char x[2]; };
-
-            template <typename C> static one test(decltype(&C::num_inputs));
-            template <typename C> static two test(...);
-
-        public:
-            enum { value = sizeof(test<T>(0)) == sizeof(char) };
+            inputs = node.inputs();
         };
 
-        template <typename T>
-        class has_inputs
+        template <typename Node>
+        concept has_num_inputs = requires(Node node, size_t num_inputs)
         {
-            typedef char one;
-            struct two { char x[2]; };
-
-            template <typename C> static one test(decltype(&C::inputs));
-            template <typename C> static two test(...);
-
-        public:
-            enum { value = sizeof(test<T>(0)) == sizeof(char) };
+            num_inputs = node.num_inputs();
         };
 
-        template <typename T>
-        class has_buffer_size
+        template <typename Node>
+        concept has_init_buffer = requires(Node node, std::span<std::byte> buffer)
         {
-            typedef char one;
-            struct two { char x[2]; };
-
-            template <typename C> static one test(decltype(&C::buffer_size));
-            template <typename C> static two test(...);
-
-        public:
-            enum { value = sizeof(test<T>(0)) == sizeof(char) };
+            node.init_buffer(buffer);
         };
 
-        template <typename T>
-        class has_init_buffer
+        template <typename Node>
+        concept has_internal_latency = requires(Node node, size_t internal_latency)
         {
-            typedef char one;
-            struct two { char x[2]; };
-
-            template <typename C> static one test(decltype(&C::init_buffer));
-            template <typename C> static two test(...);
-
-        public:
-            enum { value = sizeof(test<T>(0)) == sizeof(char) };
+            internal_latency = node.internal_latency();
         };
     }
 
     template<typename Node>
     constexpr auto get_outputs(Node node) noexcept
     {
-        if constexpr (details::has_outputs<Node>::value)
+        if constexpr (details::has_outputs<Node>)
         {
             return node.outputs();
         }
@@ -353,7 +326,7 @@ namespace iv {
     template<typename Node>
     constexpr auto get_num_outputs(Node node) noexcept
     {
-        if constexpr (details::has_num_outputs<Node>::value)
+        if constexpr (details::has_num_outputs<Node>)
         {
             return node.num_outputs();
         }
@@ -366,7 +339,7 @@ namespace iv {
     template<typename Node>
     constexpr auto get_inputs(Node node) noexcept
     {
-        if constexpr (details::has_inputs<Node>::value)
+        if constexpr (details::has_inputs<Node>)
         {
             return node.inputs();
         }
@@ -379,7 +352,7 @@ namespace iv {
     template<typename Node>
     constexpr auto get_num_inputs(Node node) noexcept
     {
-        if constexpr (details::has_num_inputs<Node>::value)
+        if constexpr (details::has_num_inputs<Node>)
         {
             return node.num_inputs();
         }
@@ -389,26 +362,23 @@ namespace iv {
         }
     }
 
-    template<typename Node>
-    constexpr auto get_buffer_size(Node node) noexcept
+    template<typename Node, typename Allocator>
+    constexpr void do_init_buffer(Node&& node, Allocator& allocator) noexcept
     {
-        if constexpr (details::has_buffer_size<Node>::value)
+        if constexpr (details::has_init_buffer<Node>)
         {
-            return node.buffer_size();
-        }
-        else
-        {
-            return 0;
+            std::forward<Node>(node).init_buffer(allocator);
         }
     }
 
     template<typename Node>
-    constexpr void do_init_buffer(Node node, NodeState const& state) noexcept
+    constexpr size_t get_internal_latency(Node&& node) noexcept
     {
-        if constexpr (details::has_init_buffer<Node>::value)
+        if constexpr (details::has_internal_latency<Node>)
         {
-            node.init_buffer(state);
+            return std::forward<Node>(node).internal_latency();
         }
+        return 0;
     }
 
     template<typename BinaryOp>
@@ -595,28 +565,205 @@ namespace iv {
         }
     };
 
-    class DynamicNode {
+    template<typename T>
+    union AlignedStorage
+    {
+        alignas(T) std::byte uninitialized_object[sizeof(T)];
+        T object;
+
+        constexpr explicit AlignedStorage() :
+            uninitialized_object{}
+        {
+        }
+    };
+
+    struct PortId {
+        size_t node;
+        size_t port;
+    };
+
+    struct GraphEdge {
+        PortId source, target;
+    };
+
+    struct FixedBufferAllocator
+    {
+        std::span<std::byte> buffer;
+
+        template<typename T>
+        auto initialize_array(size_t number)
+        {
+            size_t num_bytes = number * sizeof(T);
+            if (num_bytes > buffer.size()) throw "buffer is too small!";
+            auto ptr = ::new (buffer.data()) T[number];
+            buffer = buffer.subspan(num_bytes, buffer.size() - num_bytes);
+            return std::span<T> { ptr, number };
+        };
+
+        template<typename T>
+        T& initialize_object()
+        {
+            return initialize_array<T>(1)[0];
+        }
+
+        template<typename T>
+        auto allocate_array(size_t number)
+        {
+            auto span = initialize_array<AlignedStorage<T>>(number);
+            return std::span<T> { &(span.data()->object), span.size() };
+        };
+
+        template<typename T, typename... Args>
+        void construct_at(T* ptr, Args&&... args) const
+        {
+            ::new (ptr) T(std::forward<Args>(args)...);
+        }
+
+        template<typename T, typename U>
+        constexpr auto assign(T& t, U&& u) const -> std::add_lvalue_reference_t<decltype(t = std::forward<U>(u))>
+        {
+            return t = std::forward<U>(u);
+        }
+
+        template<typename T>
+        constexpr auto at(std::span<T> t, size_t i) const -> T&
+        {
+            return t[i];
+        }
+
+        template<typename R, typename T>
+        void fill_n(R&& range, T&& t) const
+        {
+            std::fill_n(range.begin(), range.end(), std::forward<T>(t));
+        }
+    };
+
+    struct CountingNonAllocator
+    {
+        size_t total_bytes;
+
+        void advance_buffer(size_t number)
+        {
+            total_bytes += number;
+        };
+
+        template<typename T>
+        auto initialize_array(size_t number)
+        {
+            advance_buffer(number * sizeof(T));
+            return std::span<T> { static_cast<T*>(nullptr), number };
+        };
+
+        template<typename T>
+        T& initialize_object()
+        {
+            static AlignedStorage<T> storage;
+            advance_buffer(sizeof(T));
+            return storage.object;
+        }
+
+        template<typename T>
+        auto allocate_array(size_t number)
+        {
+            std::span<AlignedStorage<T>> span = initialize_array<AlignedStorage<T>>(number);
+            return std::span<T> { static_cast<T*>(nullptr), span.size() };
+        };
+
+        template<typename T, typename... Args>
+        void construct_at(T* ptr, Args&&... args) const
+        {
+        }
+
+        template<typename T, typename U>
+        constexpr auto assign(T& t, U&& u) const ->std::add_lvalue_reference_t<decltype(t = std::forward<U>(u))>
+        {
+            static AlignedStorage<std::remove_reference_t<decltype(t = std::forward<U>(u))>> storage;
+            return storage.object;
+        }
+
+        template<typename T>
+        constexpr auto at(std::span<T> t, size_t i) const -> T&
+        {
+            static AlignedStorage<T> storage;
+            return storage.object;
+        }
+
+        template<typename R, typename T>
+        void fill_n(R&& range, T&& t) const
+        {
+        }
+    };
+
+    using AnyAllocator = std::variant<FixedBufferAllocator, CountingNonAllocator>;
+    struct TypeErasedAllocator
+    {
+        AnyAllocator _allocator;
+
+        template<typename T>
+        auto initialize_array(size_t number)
+        {
+            return std::visit([=](auto&& allocator) { return allocator.initialize_array<T>(number); }, _allocator);
+        };
+
+        template<typename T>
+        auto initialize_object() -> T&
+        {
+            return std::visit([](auto&& allocator) { return allocator.initialize_object<T>(); }, _allocator);
+        }
+
+        template<typename T>
+        auto allocate_array(size_t number)
+        {
+            return std::visit([=](auto&& allocator) { return allocator.allocate_array<T>(number); }, _allocator);
+        };
+
+        template<typename T, typename... Args>
+        void construct_at(T* ptr, Args&&... args) const
+        {
+            std::visit([&](auto&& allocator) { return allocator.construct_at<T, Args...>(ptr, std::forward<Args>(args)...); }, _allocator);
+        }
+
+        template<typename T, typename U>
+        constexpr auto assign(T& t, U&& u) const -> std::add_lvalue_reference_t<decltype(t = std::forward<U>(u))>
+        {
+            return std::visit([&](auto&& allocator) { return allocator.assign<T, U>(t, std::forward<U>(u)); }, _allocator);
+        }
+
+        template<typename T>
+        constexpr auto at(std::span<T> t, size_t i) const -> T&
+        {
+            return std::visit([=](auto&& allocator) { return allocator.at<T>(t, i); }, _allocator);
+        }
+
+        template<typename R, typename T>
+        void fill_n(R&& r, T&& t) const
+        {
+            std::visit([&](auto&& allocator) { return allocator.at<T>(std::forward<R>(r), std::forward<T>(t)); }, _allocator);
+        }
+    };
+
+    class TypeErasedNode {
         std::shared_ptr<void> _node;
         std::vector<InputConfig> _inputs;
         std::vector<OutputConfig> _outputs;
         size_t _buffer_size;
-        void (*_init_buffer_fn)(void*, NodeState const&) noexcept;
+        void (*_init_buffer_fn)(void*, TypeErasedAllocator) noexcept;
         void (*_tick_fn)(void*, TickState const&) noexcept;
 
     public:
         template<typename Node>
-        constexpr /*implicit*/ DynamicNode(Node node)
+        constexpr /*implicit*/ TypeErasedNode(Node node)
         {
             if constexpr (std::is_empty_v<Node>)
             {
                 _node = nullptr;
-                _init_buffer_fn = [](void*, NodeState const& state) noexcept { do_init_buffer(Node{}, state); };
+                _init_buffer_fn = [](void*, TypeErasedAllocator allocator) noexcept { do_init_buffer(Node{}, allocator); };
                 _tick_fn = [](void*, TickState const& state) noexcept { Node{}.tick(state); };
             }
             else
             {
                 _node = std::make_shared<Node>(node);
-                _init_buffer_fn = [](void* node, NodeState const& state) noexcept { do_init_buffer(*static_cast<Node*>(node), state); };
+                _init_buffer_fn = [](void* node, TypeErasedAllocator allocator) noexcept { do_init_buffer(*static_cast<Node*>(node), allocator); };
                 _tick_fn = [](void* node, TickState const& state) noexcept { static_cast<Node*>(node)->tick(state); };
             }
             _inputs.assign_range(get_inputs(node));
@@ -639,9 +786,10 @@ namespace iv {
             return _buffer_size;
         }
 
-        constexpr void init_buffer(NodeState const& state) const noexcept
+        template<typename Allocator>
+        constexpr void init_buffer(Allocator&& allocator) const noexcept
         {
-            _init_buffer_fn(_node.get(), state);
+            _init_buffer_fn(_node.get(), TypeErasedAllocator{allocator});
         }
 
         void tick(TickState const& state) noexcept
@@ -650,117 +798,9 @@ namespace iv {
         }
     };
 
-    namespace details {
-        template <typename T>
-        constexpr bool is_tuple_v = false;
-        template <typename... Args>
-        constexpr bool is_tuple_v<std::tuple<Args...>> = true;
-
-        template <typename Tuple, typename Func, size_t... I>
-        constexpr void tuple_for_each_impl(Tuple&& t, Func&& f, std::index_sequence<I...>)
-        {
-            (f(std::get<I>(t)), ...);
-        }
-
-        template <typename Tuple, typename Func, size_t... I, class... Args>
-        constexpr auto declval_tuple_common(Tuple&& t, std::index_sequence<I...>, Func&& f, Args&&... args)
-        {
-            return std::declval<std::common_type_t<decltype(f(std::get<I>(t), std::forward<Args>(args)...))...>>();
-        }
-
-        template <typename Tuple, typename Func>
-        constexpr void tuple_for_each(Tuple&& t, Func&& f)
-        {
-            tuple_for_each_impl(
-                std::forward<Tuple>(t),
-                std::forward<Func>(f),
-                std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<Tuple>>>{}
-            );
-        }
-
-        template <typename Container, typename Function>
-        constexpr void for_each(Container&& container, Function&& function)
-        {
-            if constexpr (is_tuple_v<std::remove_cvref_t<Container>>)
-            {
-                tuple_for_each(std::forward<Container>(container), std::forward<Function>(function));
-            }
-            else
-            {
-                for (auto& element : container) {
-                    function(element);
-                }
-            }
-        }
-
-        template<typename Container, size_t I = 0, class Fn, class... Args>
-        auto map_at(Container& container, size_t index, Fn&& fn, Args&&... args)
-        {
-            if constexpr (is_tuple_v<std::remove_cvref_t<Container>>)
-            {
-                using Return = decltype(declval_tuple_common(
-                    container,
-                    std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<Container>>>{},
-                    std::forward<Fn>(fn),
-                    std::forward<Args>(args)...
-                ));
-                if constexpr (I < std::tuple_size_v<Container>) {
-                    if (I == index) {
-                        return static_cast<Return>(fn(std::get<I>(container), std::forward<Args>(args)...));
-                    }
-                    else {
-                        return map_at<Container, I + 1>(container, index, std::forward<Fn>(fn), std::forward<Args>(args)...);
-                    }
-                }
-                else
-                {
-                    throw "tuple index out of bounds";
-                    return std::declval<Return>();
-                }
-            }
-            else
-            {
-                return fn(container[index], std::forward<Args>(args)...);
-            }
-        }
-
-        template<typename Container>
-        constexpr size_t size(Container const& container) noexcept
-        {
-            if constexpr (is_tuple_v<std::remove_cvref_t<Container>>)
-            {
-                return std::tuple_size_v<Container>;
-            }
-            else
-            {
-                return container.size();
-            }
-        }
-    }
-
-    template<typename T>
-    union AlignedStorage
-    {
-        alignas(T) std::byte uninitialized_object[sizeof(T)];
-        T object;
-
-        constexpr explicit AlignedStorage() :
-            uninitialized_object{}
-        {
-        }
-    };
-
-    struct PortId {
-        size_t node;
-        size_t port;
-    };
-
-    struct GraphEdge {
-        PortId source, target;
-    };
-
-    template<typename Nodes = std::vector<DynamicNode>, typename Edges = std::vector<GraphEdge>>
     struct GraphNode {
+        using Nodes = std::vector<TypeErasedNode>;
+        using Edges = std::unordered_set<GraphEdge>;
         Nodes _nodes;
         Edges _edges;
         size_t _num_public_inputs;
@@ -769,12 +809,15 @@ namespace iv {
     public:
         static constexpr size_t GRAPH_ID = std::numeric_limits<size_t>::max();
 
-        constexpr explicit GraphNode(Nodes&& nodes, Edges&& edges, size_t num_inputs = 0, size_t num_outputs = 0) noexcept :
-            _nodes(std::move(nodes)),
-            _edges(std::move(edges)),
+        explicit GraphNode(Nodes&& nodes, Edges&& edges, size_t num_inputs = 0, size_t num_outputs = 0) :
+            _nodes(std::forward<Nodes>(nodes)),
+            _edges(std::forward<Edges>(edges)),
             _num_public_inputs(num_inputs),
             _num_public_outputs(num_outputs)
-        {}
+        {
+            expand_hyperedge_ports();
+            sort_nodes();
+        }
 
         constexpr auto inputs() const noexcept
         {
@@ -783,7 +826,6 @@ namespace iv {
 
         constexpr auto outputs() const noexcept
         {
-            // todo: compute latencies to align all outputs together
             return std::vector<OutputConfig>(_num_public_outputs);
         }
 
@@ -797,7 +839,8 @@ namespace iv {
             return _num_public_outputs;
         }
 
-        constexpr void init_buffer(NodeState const& state) noexcept
+        template<typename Allocator>
+        void init_buffer(Allocator& allocator) const
         {
             /*
             * struct MemoryLayout {
@@ -821,35 +864,14 @@ namespace iv {
             * };
             */
 
-            std::span<std::byte> buffer = state.buffer;
+            size_t num_nodes = _nodes.size();
 
-            auto advance_buffer = [&](size_t amount)
-            {
-                buffer = buffer.subspan(amount, buffer.size() - amount);
-            };
-
-            auto initialize_array = [&]<typename T>(size_t number)
-            {
-                auto ptr = ::new (buffer.data()) T[number];
-                advance_buffer(number * sizeof(T));
-                return std::span<T> { ptr, number };
-            };
-
-            auto allocate_array = [&]<typename T>(size_t number)
-            {
-                std::span<AlignedStorage<T>> span = initialize_array.template operator()<AlignedStorage<T>>(number);
-                return std::span<T> { &(span.data()->object), span.size() };
-            };
-
-            size_t num_nodes = details::size(_nodes);
-            size_t num_ports = _edges.size();
-
-            auto private_input_configs = std::vector<InputConfig>(_num_public_outputs);
+            std::vector<InputConfig> private_input_configs(_num_public_outputs);
             OutputConfig private_outputs_config;
 
-            NodeState& private_node_sate = initialize_array.template operator()<NodeState>(1)[0];
-            auto node_states = initialize_array.template operator()<NodeState>(num_nodes);
-            private_node_sate.outputs = allocate_array.template operator()<OutputPort>(_num_public_inputs);
+            NodeState& private_node_sate = allocator.initialize_object<NodeState>();
+            std::span<NodeState> node_states = allocator.initialize_array<NodeState>(num_nodes);
+            allocator.assign(private_node_sate.outputs, allocator.allocate_array<OutputPort>(_num_public_inputs));
 
             auto calculate_port_buffer_size = [](size_t latency, size_t history)
             {
@@ -858,84 +880,112 @@ namespace iv {
                 return pow2_size;
             };
 
-            std::unordered_map<PortId, PortId> out_of_in;
-            for (auto const& edge : _edges)
+            std::unordered_map<PortId, PortId> source_of;
+            std::unordered_map<PortId, PortId> target_of;
+            for (GraphEdge const& edge : _edges)
             {
-                out_of_in[edge.target] = edge.source;
+                source_of[edge.target] = edge.source;
+                target_of[edge.source] = edge.target;
             }
 
-            auto setup_node_state = [&](auto& node, size_t node_i)
+            std::unordered_map<PortId, size_t> input_port_global_latencies;
+
+            auto setup_node_state = [&](TypeErasedNode const& node, size_t node_i)
             {
-                auto node_state = (node_i != GRAPH_ID)
-                    ? node_states[node_i]
+                NodeState& node_state = (node_i != GRAPH_ID)
+                    ? allocator.at(node_states, node_i)
                     : private_node_sate;
 
-                std::span<SharedPortData> input_port_data = initialize_array.template operator()<SharedPortData>(get_num_inputs(node));
+                std::span<SharedPortData> input_port_data = allocator.initialize_array<SharedPortData>(get_num_inputs(node));
                 if (node_i != GRAPH_ID)
                 {
-                    node_state.outputs = allocate_array.template operator()<OutputPort>(get_num_outputs(node));
-                    node_state.inputs = allocate_array.template operator()<InputPort>(get_num_inputs(node));
+                    allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(get_num_outputs(node)));
+                    allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(get_num_inputs(node)));
                 }
                 else
                 {
                     // private inputs
-                    node_state.inputs = allocate_array.template operator()<InputPort>(_num_public_outputs);
+                    allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(_num_public_outputs));
                 }
 
-                std::span<InputConfig const> target_configs = (node_i != GRAPH_ID)
-                    ? get_inputs(node)
-                    : private_input_configs;
-                std::span<InputPort> target_ports = node_state.inputs;
-
-                for (size_t in_i = 0; in_i < target_configs.size(); ++in_i)
+                std::span<InputConfig const> input_configs;
+                if (node_i != GRAPH_ID)
                 {
-                    InputConfig const& target_config = target_configs[in_i];
-                    InputPort& target_port = target_ports[in_i];
+                    input_configs = get_inputs(node);
+                }
+                else
+                {
+                    input_configs = private_input_configs;
+                }
 
-                    if (auto it = out_of_in.find({ node_i, in_i }); it != out_of_in.end())
+                // align latencies
+                size_t node_global_latency = 0;
+                std::vector<size_t> input_port_extra_latencies(input_configs.size());
+                for (size_t in_port = 0; in_port < input_configs.size(); ++in_port)
+                {
+                    node_global_latency = std::max(node_global_latency, input_port_global_latencies[{ node_i, in_port }]);
+                }
+                for (size_t in_port = 0; in_port < input_configs.size(); ++in_port)
+                {
+                    input_port_extra_latencies[in_port] += node_global_latency - input_port_global_latencies[{ node_i, in_port }];
+                }
+                if (node_i != GRAPH_ID) {
+                    size_t const num_outputs = get_num_outputs(node);
+                    node_global_latency += get_internal_latency(node);
+                    for (size_t out_port = 0; out_port < num_outputs; ++out_port)
+                    {
+                        size_t output_latency = node_global_latency + get_outputs(node)[out_port].latency;
+                        PortId connection = target_of[{ node_i, out_port }];
+                        input_port_global_latencies[connection] = output_latency;
+                    }
+                }
+
+                std::span<InputPort> input_ports = node_state.inputs;
+                for (size_t input_i = 0; input_i < input_configs.size(); ++input_i)
+                {
+                    InputConfig const& input_config = input_configs[input_i];
+                    InputPort& input_port = allocator.at(input_ports, input_i);
+
+                    if (auto it = source_of.find({ node_i, input_i }); it != source_of.end())
                     {
                         // input is connected to output, let's setup both
-                        size_t source_node_i = it->second.node;
-                        size_t source_port_i = it->second.port;
+                        size_t output_node_i = it->second.node;
+                        size_t output_port_i = it->second.port;
 
-                        OutputConfig const& source_config = (source_node_i != GRAPH_ID)
-                            ? details::map_at(_nodes, source_node_i, [&](auto& source_node)
-                            {
-                                return get_outputs(source_node)[source_port_i];
-                            })
+                        OutputConfig const& output_config = (output_node_i != GRAPH_ID)
+                            ? get_outputs(_nodes[output_node_i])[output_port_i]
                             : private_outputs_config;
-                        OutputPort& source_port = (source_node_i != GRAPH_ID)
-                            ? private_node_sate.outputs[source_port_i]
-                            : node_states[source_node_i].outputs[source_port_i];
+                        OutputPort& output_port = (output_node_i != GRAPH_ID)
+                            ? allocator.at(private_node_sate.outputs, output_port_i)
+                            : allocator.at(allocator.at(node_states, output_node_i).outputs, output_port_i);
 
-                        auto num_port_samples = calculate_port_buffer_size(source_config.latency, target_config.history);
-                        auto input_samples = initialize_array.template operator()<Sample>(num_port_samples);
-                        ::new (&input_port_data[in_i]) SharedPortData(input_samples, source_config.latency);
-                        ::new (&source_port) OutputPort(input_port_data[in_i]);
+                        auto num_port_samples = calculate_port_buffer_size(output_config.latency + input_port_extra_latencies[input_i], input_config.history);
+                        auto input_samples = allocator.initialize_array<Sample>(num_port_samples);
+                        allocator.construct_at(&input_port_data[input_i], input_samples, output_config.latency);
+                        allocator.construct_at(&output_port, input_port_data[input_i]);
                     }
                     else
                     {
                         // input is disconnected: init dummy buffer
-                        auto num_port_samples = calculate_port_buffer_size(0, target_config.history);
-                        auto input_samples = initialize_array.template operator()<Sample>(num_port_samples);
-                        ::new (&input_port_data[in_i]) SharedPortData(input_samples, 0);
+                        auto num_port_samples = calculate_port_buffer_size(0, input_config.history);
+                        auto input_samples = allocator.initialize_array<Sample>(num_port_samples);
+                        allocator.construct_at(&input_port_data[input_i], input_samples, 0);
                     }
-                    ::new (&target_port) InputPort(input_port_data[in_i], target_config.history);
-                    if (target_config.default_value)
+                    allocator.construct_at(&input_port, input_port_data[input_i], input_config.history);
+                    if (input_config.default_value)
                     {
-                        std::fill_n(input_port_data[in_i].buffer.begin(), input_port_data[in_i].buffer.end(), target_config.default_value);
+                        allocator.fill_n(allocator.at(input_port_data, input_i).buffer, input_config.default_value);
                     }
                 }
-                if (node_i != GRAPH_ID) {
-                    node_state.buffer = allocate_array.template operator()<std::byte>(get_buffer_size(node));
-                }
+
+                do_init_buffer(_nodes[node_i], allocator);
             };
 
             for (size_t node_i = 0; node_i < num_nodes + 1; ++node_i)
             {
                 if (node_i < num_nodes)
                 {
-                    details::map_at(_nodes, node_i, setup_node_state, node_i);
+                    setup_node_state(_nodes[node_i], node_i);
                 }
                 else if (node_i == num_nodes)
                 {
@@ -944,28 +994,18 @@ namespace iv {
             }
         }
 
-        constexpr size_t buffer_size() const noexcept
-        {
-            size_t total = 0;
-            return total;
-        }
-
         void tick(TickState const& state) noexcept
         {
             auto& private_state = get_private_state(state.buffer);
             for (size_t i = 0; i < _num_public_inputs; ++i) {
                 private_state.outputs[i].push(state.inputs[i].get());
             }
-            size_t num_nodes = details::size(_nodes);
+            size_t num_nodes = _nodes.size();
             for (size_t i = 0; i < num_nodes; ++i)
             {
-                details::map_at(_nodes, i, [&, i=i](auto& node)
-                {
-                    TickState node_state {
-                        get_node_state(state.buffer, i),
-                        state.midi,
-                    };
-                    node.tick(node_state);
+                _nodes[i].tick({
+                    get_node_state(state.buffer, i),
+                    state.midi,
                 });
             }
             for (size_t i = 0; i < _num_public_outputs; ++i) {
@@ -973,18 +1013,598 @@ namespace iv {
             }
         }
 
-        constexpr NodeState& get_private_state(std::span<std::byte> buffer) const noexcept
+        NodeState& get_private_state(std::span<std::byte> buffer) const
         {
-            return *(NodeState*)(buffer.data());  // first index in the buffer
+            return reinterpret_cast<NodeState*>(buffer.data())[0];  // first index in the buffer
         }
 
-        constexpr NodeState& get_node_state(std::span<std::byte> buffer, size_t node_i) const noexcept
+        NodeState& get_node_state(std::span<std::byte> buffer, size_t node_i) const
         {
-            if (node_i >= details::size(_nodes))
+            if (node_i >= _nodes.size())
             {
                 throw "node index out of range";
             }
-            return *(node_i + (NodeState*)(buffer.data()));
+            // from index 1 in the buffer
+            return ((NodeState*)buffer.data())[1 + node_i];
+        }
+
+    private:
+        void expand_hyperedge_ports()
+        {
+            std::unordered_map<PortId, std::vector<GraphEdge>> edges_map;
+            for (GraphEdge const& edge : _edges)
+            {
+                edges_map[edge.source].push_back(edge);
+            }
+
+            for (size_t node = 0; node < _nodes.size(); ++node)
+            {
+                size_t const num_inputs = get_num_inputs(_nodes[node]);
+                for (size_t in_port = 0; in_port < num_inputs; ++in_port)
+                {
+                    auto it = edges_map.find({ node, in_port });
+                    if (it == edges_map.end()) continue;
+                    auto const& edges_to_expand = it->second;
+                    size_t const port_arity = edges_to_expand.size();
+                    if (port_arity <= 1) continue;
+
+                    _nodes.emplace_back(SumNode(port_arity));
+                    size_t const sum_node = _nodes.size() - 1;
+                    
+                    for (size_t out_port = 0; out_port < edges_to_expand.size(); ++out_port)
+                    {
+                        GraphEdge const& to_rewire = edges_to_expand[out_port];
+                        _edges.erase(to_rewire);
+                        _edges.insert({ to_rewire.source, { sum_node, out_port } });
+                    }
+                    _edges.insert({ { sum_node, 0 }, { node, in_port } });
+                }
+            }
+
+            std::unordered_map<PortId, std::vector<GraphEdge>> reverse_edges_map;
+            for (GraphEdge const& edge : _edges)
+            {
+                reverse_edges_map[edge.target].push_back(edge);
+            }
+
+            for (size_t node = 0; node < _nodes.size(); ++node)
+            {
+                size_t const num_outputs = get_num_outputs(_nodes[node]);
+                for (size_t out_port = 0; out_port < num_outputs; ++out_port)
+                {
+                    auto it = edges_map.find({ node, out_port });
+                    if (it == edges_map.end()) continue;
+                    auto const& edges_to_expand = it->second;
+                    size_t const port_arity = edges_to_expand.size();
+                    if (port_arity <= 1) continue;
+
+                    _nodes.emplace_back(BroadcastNode(port_arity));
+                    size_t const broadcast_node = _nodes.size() - 1;
+
+                    for (size_t in_port = 0; in_port < edges_to_expand.size(); ++in_port)
+                    {
+                        GraphEdge const& to_rewire = edges_to_expand[in_port];
+                        _edges.erase(to_rewire);
+                        _edges.insert({ { broadcast_node, in_port }, to_rewire.target });
+                    }
+                    _edges.insert({ { node, out_port }, { broadcast_node, 0 } });
+                }
+            }
+        }
+
+        void sort_nodes()
+        {
+            const size_t n = _nodes.size();
+
+            std::unordered_map<PortId, PortId> edges_map;
+            std::unordered_map<PortId, PortId> reverse_edges_map;
+            for (GraphEdge const& edge : _edges)
+            {
+                edges_map[edge.source] = edge.target;
+                reverse_edges_map[edge.target] = edge.source;
+            }
+
+            auto make_heads_queue = [&]()
+            {
+                std::deque<size_t> queue;
+                for (size_t i = 0; i < n; ++i)
+                {
+                    bool all_inputs_disconnected = true;
+                    size_t const num_inputs = get_num_inputs(_nodes[i]);
+                    for (size_t in_i = 0; in_i < num_inputs; ++in_i)
+                    {
+                        if (reverse_edges_map.contains({i, in_i}))
+                        {
+                            all_inputs_disconnected = false;
+                            break;
+                        }
+                    }
+                    if (!all_inputs_disconnected) continue;
+                    queue.push_back(i);
+                }
+                for (size_t private_out_i = 0; private_out_i < _num_public_inputs; ++private_out_i)
+                {
+                    if (auto it = edges_map.find({ GRAPH_ID, private_out_i }); it != edges_map.end())
+                    {
+                        queue.push_back(it->second.node);
+                    }
+                }
+                return queue;
+            };
+
+            std::unordered_map<size_t, std::unordered_set<size_t>> cyclic_parents_of(n);
+            {
+                auto queue = make_heads_queue();
+                std::vector<bool> seen(n, false);
+                while (!queue.empty())
+                {
+                    size_t i = queue.front();
+                    queue.pop_front();
+                    if (seen[i]) continue;
+                    seen[i] = true;
+
+                    std::vector<bool> inner_seen(n, false);
+                    std::deque<size_t> inner_queue;
+                    inner_queue.push_back(i);
+
+                    while (!inner_queue.empty())
+                    {
+                        size_t node = inner_queue.front();
+                        inner_queue.pop_front();
+                        if (inner_seen[node]) continue;
+                        inner_seen[node] = true;
+                        if (!cyclic_parents_of[node].empty()) continue;
+
+                        size_t const num_outputs = get_num_outputs(_nodes[node]);
+                        for (size_t out_i = 0; out_i < num_outputs; ++out_i)
+                        {
+                            if (auto it = edges_map.find({ node, out_i }); it != edges_map.end())
+                            {
+                                size_t child = it->second.node;
+                                if (child == i) cyclic_parents_of[i].insert(node);
+                                inner_queue.push_back(child);
+                            }
+                        }
+                    }
+
+                    size_t const num_outputs = get_num_outputs(_nodes[i]);
+                    for (size_t out_i = 0; out_i < num_outputs; ++out_i) {
+                        if (auto it = edges_map.find({ i, out_i }); it != edges_map.end())
+                        {
+                            queue.push_back(it->second.node);
+                        }
+                    }
+                }
+            }
+
+            auto queue = make_heads_queue();
+            std::vector<bool> placed(n, false);
+            std::vector<size_t> sorted;
+            sorted.reserve(n);
+
+            while (!queue.empty())
+            {
+                size_t node = queue.front();
+                queue.pop_front();
+                if (placed[node]) continue;
+
+                bool all_dependencies_satisfied = true;
+                size_t const num_inputs = get_num_inputs(_nodes[node]);
+                for (size_t in_i = 0; in_i < num_inputs; ++in_i) {
+                    if (auto it = reverse_edges_map.find({ node, in_i }); it != reverse_edges_map.end())
+                    {
+                        size_t parent = it->second.node;
+                        if (!placed[parent] && !cyclic_parents_of[node].contains(parent)) {
+                            all_dependencies_satisfied = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (all_dependencies_satisfied) {
+                    size_t const num_outputs = get_num_outputs(_nodes[node]);
+                    for (size_t out_i = 0; out_i < num_outputs; ++out_i)
+                    {
+                        if (auto it = edges_map.find({ node, out_i }); it != edges_map.end())
+                        {
+                            queue.push_back(it->second.node);
+                        }
+                    }
+                    sorted.push_back(node);
+                    placed[node] = true;
+                }
+                else {
+                    queue.push_back(node);
+                }
+            }
+
+            Nodes sorted_nodes;
+            sorted_nodes.reserve(n);
+            for (size_t i : sorted) {
+                sorted_nodes.push_back(std::move(_nodes[i]));
+            }
+            _nodes.swap(sorted_nodes);
+        }
+    };
+
+    namespace details
+    {
+        template<size_t size, typename... Args>
+        auto make_array(Args&&... args)
+        {
+            return std::array<std::common_type_t<Args...>, size>
+            {
+                std::forward<Args>(args)...
+            };
+        }
+    }
+
+    template <size_t quad_words>
+    class FastBitset {
+        static_assert(quad_words > 0, "Need at least one word");
+        std::array<uint64_t, quad_words> data_{};
+
+    public:
+        void set(size_t pos) {
+            auto& w = data_[pos >> 6];
+            w |= uint64_t(1) << (pos & 63);
+        }
+        void reset(size_t pos) {
+            auto& w = data_[pos >> 6];
+            w &= ~(uint64_t(1) << (pos & 63));
+        }
+        bool test(size_t pos) const {
+            return (data_[pos >> 6] >> (pos & 63)) & 1;
+        }
+        void clear() {
+            data_.fill(0);
+        }
+
+        // forward‑only const iterator
+        class const_iterator {
+            const FastBitset* bs_;
+            size_t word_idx_;
+            uint64_t word_;
+            size_t idx_;
+
+            void advance_to_next() {
+                // fill word_ with next nonzero or mark end
+                while (word_ == 0 && ++word_idx_ < quad_words) {
+                    word_ = bs_->data_[word_idx_];
+                }
+                if (word_ != 0) {
+                    unsigned tz = std::countr_zero(word_);
+                    idx_ = word_idx_ * 64 + tz;
+                    word_ &= word_ - 1;
+                }
+                else {
+                    // mark end
+                    bs_ = nullptr;
+                }
+            }
+
+        public:
+            // end iterator
+            const_iterator() : bs_(nullptr), word_idx_(0), word_(0), idx_(0) {}
+            // begin iterator
+            explicit const_iterator(const FastBitset* bs)
+                : bs_(bs), word_idx_(0), word_(bs->data_[0]), idx_(0)
+            {
+                if (word_ == 0) advance_to_next();
+                else {
+                    unsigned tz = std::countr_zero(word_);
+                    idx_ = tz;
+                    word_ &= word_ - 1;
+                }
+            }
+
+            size_t operator*() const { return idx_; }
+
+            const_iterator& operator++() {
+                if (!bs_) return *this;
+                advance_to_next();
+                return *this;
+            }
+
+            bool operator!=(const const_iterator& o) const {
+                return bs_ != o.bs_;
+            }
+        };
+
+        const_iterator begin() const { return const_iterator(this); }
+        const_iterator end()   const { return const_iterator(); }
+    };
+
+    template<size_t MAX_VOICES>
+    class VoicePoolNode {
+        TypeErasedNode _note_node;
+        GraphNode _graph_node;
+        size_t _internal_latency_cache;
+        Sample _silence_threshold;
+
+    public:
+        using Bitset = FastBitset<(MAX_VOICES - 1) / sizeof(uint64_t) + 1>;
+
+        struct MidiNodeState : public NodeState {
+            std::array<NodeState, MAX_VOICES> note_states;
+            Bitset active_notes;
+        };
+
+        template<typename Node>
+        explicit VoicePoolNode(
+            Node node,
+            Sample silence_threshold = std::pow(10.0, -60.0 / 20.0)  // -60db
+        ) noexcept :
+            _note_node(node),
+            _graph_node(
+                { std::move(node) },
+                { GraphEdge { { 0, 0 }, { GraphNode::GRAPH_ID, 0 } }, },
+                0, 1
+            ),
+            _internal_latency_cache(get_internal_latency(_graph_node)),
+            _silence_threshold(silence_threshold)
+        {
+        }
+
+        constexpr auto inputs() const noexcept
+        {
+            return std::vector<InputConfig>(BASE_INPUTS + get_num_inputs(_note_node));
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            MidiNodeState& private_state = get_private_state(state);
+
+            for (auto const& midi_message : state.midi)
+            {
+                if (midi_message.type == MidiMessageType::NOTE_ON)
+                {
+                    auto& note_state = private_state.note_states[midi_message.note_on.note_number];
+                    note_state.amplitude = midi_message.note_on.amplitude;
+                    note_state.ttl = _internal_latency_cache;
+                    private_state.active_notes.set(midi_message.note_on.note_number);
+                }
+                if (midi_message.type == MidiMessageType::NOTE_OFF)
+                {
+                    auto& note_state = private_state.note_states[midi_message.note_off.note_number];
+                    note_state.amplitude = 0;
+                }
+            }
+
+            Sample result = 0.0;
+            for (size_t note_number : private_state.active_notes)
+            {
+                auto& node_state = private_state.note_states[note_number];
+                if (node_state.amplitude) {
+                    node_state.ttl = _internal_latency_cache;
+                }
+                else if (node_state.ttl)
+                {
+                    --node_state.ttl;
+                }
+                else if (auto last_output = node_state.outputs[0].get(); last_output <= _silence_threshold && last_output >= -_silence_threshold)
+                {
+                    private_state.active_notes.reset(note_number);
+                    continue;
+                }
+
+                node_state.inputs[0].push(note_number_to_frequency(note_number));
+                node_state.inputs[1].push(node_state.amplitude / 127.0);
+                auto& private_state = get_private_state(state);
+                for (size_t extra_i = 0; extra_i < private_state.inputs.size(); ++extra_i)
+                {
+                    node_state.inputs[BASE_GRAPH_INPUTS + extra_i].push(private_state.inputs[extra_i].get());
+                }
+                _graph_node.tick({ node_state, state.midi });
+                result += node_state.outputs[0].get();
+            }
+
+            auto& out_mix = state.outputs[0];
+            out_mix.push(result);
+        }
+
+        constexpr size_t internal_latency() const noexcept
+        {
+            return _internal_latency_cache;
+        }
+
+        template<typename Allocator>
+        void init_buffer(Allocator& allocator) const
+        {
+            /*
+            * struct MemoryLayout {
+            *     State;          // MidiNode state
+            *     InputPort[n];   // node inputs
+            *     OutputPort[n];  // node outputs
+            *     std::byte[b];   // node data
+            * };
+            */
+            MidiNodeState& node_state = allocator.initialize_object<MidiNodeState>();
+
+            auto node_inputs = get_inputs(_note_node);
+            auto node_outputs = get_outputs(_note_node);
+
+            std::span<InputPort> node_inputs = allocator.allocate_array<InputPort>(node_inputs.size());
+            std::span<OutputPort> node_inputs = allocator.allocate_array<OutputPort>(node_outputs.size());
+        }
+
+        MidiNodeState& get_private_state(NodeState const& state) const noexcept
+        {
+            return *reinterpret_cast<MidiNodeState*>(state.buffer.data());
+        }
+
+        static constexpr Sample note_number_to_frequency(uint8_t note_number)
+        {
+            return Sample(440.0 * std::pow(2.0, (note_number - 69) / 12.0));
+        }
+    };
+
+    class MidiNode {
+        TypeErasedNode _note_node;
+        GraphNode _graph_node;
+        size_t _internal_latency_cache;
+        Sample _silence_threshold;
+
+    public:
+        static constexpr size_t const MAX_MIDI_NOTES = 128;
+        static_assert(MAX_MIDI_NOTES > 0);
+        static constexpr size_t const MAX_MIDI_NOTES_UINT64 = (MAX_MIDI_NOTES - 1) / sizeof(uint64_t) + 1;
+        using Bitset = FastBitset<MAX_MIDI_NOTES_UINT64>;
+        static constexpr size_t const BASE_INPUTS = 1;
+        static constexpr size_t const BASE_GRAPH_INPUTS = 2;
+
+        struct MidiNoteState : public NodeState {
+            size_t ttl{0};
+            size_t amplitude{0};
+        };
+
+        struct MidiNodeState : public NodeState {
+            Bitset active_notes;
+            std::array<MidiNoteState, MAX_MIDI_NOTES> note_states;
+        };
+
+        template<typename Node>
+        explicit MidiNode(
+            Node node,
+            Sample silence_threshold = std::pow(10.0, -60.0 / 20.0)  // -60db
+        ) noexcept :
+            _note_node(node),
+            _graph_node(
+                { std::move(node) },
+                { GraphEdge { { 0, 0 }, { GraphNode::GRAPH_ID, 0 } }, },
+                0, 1
+            ),
+            _internal_latency_cache(get_internal_latency(_graph_node)),
+            _silence_threshold(silence_threshold)
+        {}
+
+        constexpr auto inputs() const noexcept
+        {
+            return std::vector<InputConfig>(BASE_INPUTS + get_num_inputs(_note_node));
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            MidiNodeState& private_state = get_private_state(state);
+
+            for (auto const& midi_message : state.midi)
+            {
+                if (midi_message.type == MidiMessageType::NOTE_ON)
+                {
+                    auto& note_state = private_state.note_states[midi_message.note_on.note_number];
+                    note_state.amplitude = midi_message.note_on.amplitude;
+                    note_state.ttl = _internal_latency_cache;
+                    private_state.active_notes.set(midi_message.note_on.note_number);
+                }
+                if (midi_message.type == MidiMessageType::NOTE_OFF)
+                {
+                    auto& note_state = private_state.note_states[midi_message.note_off.note_number];
+                    note_state.amplitude = 0;
+                }
+            }
+
+            Sample result = 0.0;
+            for (size_t note_number : private_state.active_notes)
+            {
+                auto& node_state = private_state.note_states[note_number];
+                if (node_state.amplitude) {
+                    node_state.ttl = _internal_latency_cache;
+                }
+                else if (node_state.ttl)
+                {
+                    --node_state.ttl;
+                }
+                else if (auto last_output = node_state.outputs[0].get(); last_output <= _silence_threshold && last_output >= -_silence_threshold)
+                {
+                    private_state.active_notes.reset(note_number);
+                    continue;
+                }
+
+                node_state.inputs[0].push(note_number_to_frequency(note_number));
+                node_state.inputs[1].push(node_state.amplitude / 127.0);
+                auto& private_state = get_private_state(state);
+                for (size_t extra_i = 0; extra_i < private_state.inputs.size(); ++extra_i)
+                {
+                    node_state.inputs[BASE_GRAPH_INPUTS+extra_i].push(private_state.inputs[extra_i].get());
+                }
+                _graph_node.tick({ node_state, state.midi });
+                result += node_state.outputs[0].get();
+            }
+
+            auto& out_mix = state.outputs[0];
+            out_mix.push(result);
+        }
+
+        constexpr size_t internal_latency() const noexcept
+        {
+            return _internal_latency_cache;
+        }
+
+        template<typename Allocator>
+        void init_buffer(Allocator& allocator) const
+        {
+            /*
+            * struct MemoryLayout {
+            *     State;          // MidiNode state
+            *     InputPort[n];   // node inputs
+            *     OutputPort[n];  // node outputs
+            *     std::byte[b];   // node data
+            * };
+            */
+            MidiNodeState& node_state = allocator.initialize_object<MidiNodeState>();
+
+            auto node_inputs = get_inputs(_note_node);
+            auto node_outputs = get_outputs(_note_node);
+
+            std::span<InputPort> node_inputs = allocator.allocate_array<InputPort>(node_inputs.size());
+            std::span<OutputPort> node_inputs = allocator.allocate_array<OutputPort>(node_outputs.size());
+        }
+
+        MidiNodeState& get_private_state(NodeState const& state) const noexcept
+        {
+            return *reinterpret_cast<MidiNodeState*>(state.buffer.data());
+        }
+
+        static constexpr Sample note_number_to_frequency(uint8_t note_number)
+        {
+            return Sample(440.0 * std::pow(2.0, (note_number - 69) / 12.0));
+        }
+    };
+
+    class NodeProcessor {
+        using Buffer = std::vector<std::byte>;
+
+        GraphNode _node;
+        Buffer _buffer;
+        NodeState _graph_state;
+
+    public:
+        constexpr explicit NodeProcessor(GraphNode node) noexcept :
+            _node(std::move(node))
+        {
+            CountingNonAllocator buffer_counter;
+            _node.init_buffer(buffer_counter);
+            _buffer.resize(buffer_counter.total_bytes);
+            FixedBufferAllocator allocator(_buffer);
+            _node.init_buffer(allocator);
+        }
+
+        void tick(std::span<MidiMessage const> midi) noexcept
+        {
+            _node.tick({
+                _graph_state,
+                midi,
+            });
         }
     };
 

@@ -9,7 +9,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::atomic<float>* _noise_level;
     std::atomic<float>* _iir_outw0;
 
-    //std::unique_ptr<iv::Graph> _graph;
+    iv::NodeProcessor<> _node_processor;
     iv::PortId _left_port, _right_port;
     std::vector<std::array<iv::MidiMessage, 128>> _midi_buffers;
 

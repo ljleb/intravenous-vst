@@ -38,108 +38,66 @@
 //    },
 //    _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_ID)),
 //    _noise_level(_value_tree_state.getRawParameterValue(NOISE_LEVEL_ID)),
-//    _iir_outw0(_value_tree_state.getRawParameterValue(IIR_OUTW0_ID))
-//{
-//    init_graph();
-//}
+//    _iir_outw0(_value_tree_state.getRawParameterValue(IIR_OUTW0_ID)),
+//    _node_processor(init_graph())
+//{}
 //
-//class SampleRateNode : public iv::Node {
-//    iv::OutputPort _out_sample_rate;
+//class SampleRateNode {
 //    juce::AudioProcessor const* _audio_processor;
 //
 //public:
-//    explicit SampleRateNode(juce::AudioProcessor const* audio_processor) noexcept :
+//    explicit constexpr SampleRateNode(juce::AudioProcessor const* audio_processor) noexcept :
 //        _audio_processor(audio_processor)
 //    {}
 //
-//    void tick(std::span<iv::MidiMessage const> const& midi) noexcept override {
-//        _out_sample_rate.push(_audio_processor->getSampleRate());
+//    void tick(iv::TickState const& state) noexcept {
+//        auto& out_sample_rate = state.outputs[0];
+//        out_sample_rate.push(_audio_processor->getSampleRate());
 //    }
 //
-//    std::span<iv::OutputPort const> outputs_impl() const noexcept override { return { &_out_sample_rate, 1 }; }
-//};
-//
-//template<>
-//class iv::NodeFactory<SampleRateNode> : public iv::NodeFactoryBaseTemplate<SampleRateNode> {
-//    juce::AudioProcessor const* _audio_processor;
-//
-//public:
-//    explicit NodeFactory(juce::AudioProcessor const* audio_processor = nullptr) noexcept :
-//        _audio_processor(audio_processor)
-//    {}
-//
-//    std::unique_ptr<SampleRateNode> create_t() const {
-//        return std::make_unique<SampleRateNode>(_audio_processor);
-//    }
-//
-//    std::unique_ptr<NodeFactoryBase> clone() const override {
-//        return std::make_unique<NodeFactory>(_audio_processor);
-//    }
-//
-//    void set_audio_processor(juce::AudioProcessor const* audio_processor) {
-//        _audio_processor = audio_processor;
+//    constexpr auto outputs() const noexcept
+//    {
+//        return std::array<iv::OutputConfig, 1>{};
 //    }
 //};
 //
 //template<class T>
-//class KnobNode : public iv::Node {
+//class KnobNode {
 //    iv::OutputPort _output;
 //    std::atomic<T>* _value;
 //
 //public:
-//    explicit KnobNode(std::atomic<T>* value) noexcept: _value(value) {}
+//    explicit KnobNode(std::atomic<T>* value) noexcept :
+//        _value(value)
+//    {}
 //
-//    void tick(std::span<iv::MidiMessage const> const&) noexcept override {
-//        _output.push(_value->load());
+//    void tick(iv::TickState const& state) noexcept {
+//        auto& out = state.outputs[0];
+//        out.push(_value->load());
 //    }
 //
-//    std::span<iv::OutputPort const> outputs_impl() const noexcept override { return { &_output, 1 }; }
-//};
-//
-//template<class T>
-//class iv::NodeFactory<KnobNode<T>> : public iv::NodeFactoryBaseTemplate<KnobNode<T>> {
-//    std::atomic<T>* _value;
-//
-//public:
-//    explicit NodeFactory(std::atomic<T>* value = nullptr) noexcept: _value(value) {}
-//
-//    std::unique_ptr<KnobNode<T>> create_t() const {
-//        return std::make_unique<KnobNode<T>>(_value);
-//    }
-//
-//    std::unique_ptr<NodeFactoryBase> clone() const override {
-//        return std::make_unique<NodeFactory>(_value);
-//    }
-//
-//    void set_value(std::atomic<T>* value) {
-//        _value = value;
+//    constexpr auto outputs() const noexcept
+//    {
+//        return std::array<iv::OutputConfig, 1>{};
 //    }
 //};
 //
-//void IntravenousAudioProcessor::init_graph() {
-//    auto graph_id = iv::NodeFactory<iv::Graph>::GRAPH_ID;
-//    iv::NodeFactory<iv::Graph> graph;
-//    _left_port =  graph.add_output_port();
-//    _right_port = graph.add_output_port();
+//auto IntravenousAudioProcessor::init_graph() {
+//    using GraphNode = iv::GraphNode<>;
+//    auto graph_id = GraphNode::GRAPH_ID;
+//    std::vector<iv::DynamicNode> nodes;
+//    std::vector<iv::GraphEdge> edges;
 //
-//    auto [sample_rate, sample_rate_id] = graph.add_node<SampleRateNode>(this);
-//    auto [warp_threshold_knob, warp_threshold_knob_id] = graph.add_node<KnobNode<float>>(_warp_threshold);
-//    auto [iir_outw0_knob, iir_outw0_knob_id] = graph.add_node<KnobNode<float>>(_iir_outw0);
-//    auto [noise_generator, noise_generator_id] = graph.add_node<iv::UniformNoiseNode>();
+//    size_t num_outputs = 2;
+//
+//    auto sample_rate = SampleRateNode(this);
+//    auto warp_threshold_knob = KnobNode<float>(_warp_threshold);
+//    auto iir_outw0_knob = KnobNode<float>(_iir_outw0);
 //
 //    // noise
-//    auto [noise_level_knob, noise_level_knob_id] = graph.add_node<KnobNode<float>>(_noise_level);
-//    auto [noise, noise_id] = graph.add_node<iv::MultiplyNode>(2);
-//    graph.connect({ noise_generator_id, 0 }, { noise_id, 0 });
-//    graph.connect({ noise_level_knob_id, 0 }, { noise_id, 1 });
-//
-//    auto [midi, midi_id] = graph.add_node<iv::MidiNode>();
+//    auto noise = iv::GraphFactory<KnobNode<float>>(_noise_level) * iv::GraphFactory<iv::UniformNoiseNode>();
 //
 //    // shared inputs
-//    auto [midi_noise_generator_port, voice_noise_generator_port] = midi->add_forwarding_input_port();
-//    auto [midi_sample_rate_port, voice_sample_rate_port] = midi->add_forwarding_input_port();
-//    auto [midi_warp_threshold_port, voice_warp_threshold_port] = midi->add_forwarding_input_port();
-//    auto [midi_iir_outw0_port, voice_iir_outw0_port] = midi->add_forwarding_input_port();
 //    graph.connect({ noise_id, 0 }, { midi_id, midi_noise_generator_port });
 //    graph.connect({ sample_rate_id, 0 }, { midi_id, midi_sample_rate_port });
 //    graph.connect({ warp_threshold_knob_id, 0 }, { midi_id, midi_warp_threshold_port });
@@ -178,13 +136,14 @@
 //        voice.connect({ amplitude_id, 0 }, { voice_id, midi->get_voice_output_port() });
 //    }
 //
-//    auto midi_right_id = graph.duplicate_node(midi_id);
+//    auto channels = std::array { iv::MidiNode(voice_graph), iv::MidiNode(voice_graph) };
 //
 //    graph.connect({ midi_id, 0 }, { graph_id, _left_port });
 //    graph.connect({ midi_right_id, 0 }, { graph_id, _right_port });
 //
-//    _graph = graph.create_t();
-//    setLatencySamples(_graph->inner_latency());
+//    auto graph = GraphNode();
+//    setLatencySamples(graph.inner_latency());
+//    return graph;
 //}
 //
 //IntravenousAudioProcessor::~IntravenousAudioProcessor() {
