@@ -293,7 +293,7 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
     for (size_t sample = 0; sample < num_samples; ++sample) {
         _node_processor.tick({ _midi_buffers[sample].data(), _midi_buffer_sizes[sample] });
         for (size_t channel = 0; channel < channels; ++channel) {
-            ++_channels[0];
+            ++_channels[channel];
         }
         _midi_buffer_sizes[sample] = 0;
     }

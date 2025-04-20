@@ -16,6 +16,7 @@
 #include <functional>
 #include <bitset>
 #include <variant>
+#include <numeric>
 #include "note_number_lookup_table.h"
 
 
@@ -90,17 +91,17 @@ namespace iv {
         RIGHT,
     };
 
-    constexpr static bool is_power_of_2(size_t n) noexcept
+    static bool is_power_of_2(size_t n) noexcept
     {
         return n && !(n & (n - 1));
     }
 
-    constexpr static Sample polyblep_phi(Sample sample, Sample warp_threshold) noexcept
+    static Sample polyblep_phi(Sample sample, Sample warp_threshold) noexcept
     {
         return Sample((sample + warp_threshold) / 2.0);
     }
 
-    constexpr static Sample polyblep_p(Sample phi, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
+    static Sample polyblep_p(Sample phi, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
     {
         if (side == PolyblepSide::RIGHT && phi < delta)
         {
@@ -116,36 +117,29 @@ namespace iv {
         return 0;
     }
 
-    constexpr static Sample polyblep_error(Sample sample, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
+    static Sample polyblep_error(Sample sample, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
     {
-        Sample sign = constexpr_math::copysign<Sample>(1.0, delta);
-        delta = constexpr_math::copysign<Sample>(delta, 1.0);
+        Sample sign = std::copysign(1.0, delta);
+        delta = std::copysign(delta, 1.0);
 
         Sample phi = polyblep_phi(sample, warp_threshold);
         Sample p = polyblep_p(phi, delta, warp_threshold, side) * sign;
         return p;
     }
 
-    constexpr Sample int_floor(Sample f)
-    {
-        const size_t i = static_cast<size_t>(f);
-        return Sample(f < i ? i - 1 : i);
-    }
-
-    constexpr static inline Sample warp_pm1(Sample x, Sample limit) noexcept
+    static inline Sample warp_pm1(Sample x, Sample limit) noexcept
     {
         Sample period = Sample(2.0 * limit);
-        return x - int_floor((x + limit) / period) * period;
+        return x - std::floor((x + limit) / period) * period;
     }
 
     enum struct MidiMessageType {
-        NONE,
         NOTE_ON,
         NOTE_OFF,
     };
 
     struct MidiMessage {
-        MidiMessageType type = MidiMessageType::NONE;
+        MidiMessageType type;
         union {
             struct {
                 uint8_t note_number;
@@ -178,7 +172,7 @@ namespace iv {
         size_t _history;
 
     public:
-        constexpr explicit InputPort(
+        explicit InputPort(
             SharedPortData& shared_data,
             size_t history
         ) :
@@ -225,7 +219,7 @@ namespace iv {
         SharedPortData& _shared_data;
 
     public:
-        constexpr explicit OutputPort(SharedPortData& shared_data) :
+        explicit OutputPort(SharedPortData& shared_data) :
             _shared_data(shared_data)
         {
             if (!is_power_of_2(_shared_data.buffer.size())) {
@@ -746,7 +740,7 @@ namespace iv
     {
         size_t total_bytes = 0;
 
-        constexpr size_t get_aligned_total_bytes(size_t alignment = alignof(uint64_t)) const noexcept
+        constexpr size_t get_aligned_total_bytes(size_t alignment = alignof(max_align_t)) const noexcept
         {
             size_t const padding = (alignment - (total_bytes % alignment)) % alignment;
             return padding + total_bytes;
