@@ -42,25 +42,6 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     _node_processor(init_graph())
 {}
 
-class SampleRateNode {
-    juce::AudioProcessor const* _audio_processor;
-
-public:
-    explicit constexpr SampleRateNode(juce::AudioProcessor const* audio_processor) noexcept :
-        _audio_processor(audio_processor)
-    {}
-
-    constexpr auto outputs() const noexcept
-    {
-        return std::array<iv::OutputConfig, 1>{};
-    }
-
-    void tick(iv::TickState const& state) noexcept {
-        auto& out_sample_rate = state.outputs[0];
-        out_sample_rate.push(iv::Sample(_audio_processor->getSampleRate()));
-    }
-};
-
 template<class T>
 class KnobNode {
     std::atomic<T>* _value;
@@ -127,11 +108,10 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
     auto graph = make_subgraph([this](auto& nodes, auto& edges)
     {
         constexpr auto graph = iv::GraphNode::GRAPH_ID;
-        auto sample_rate = emplace_back_id(nodes, SampleRateNode(this));
         auto warp_threshold_knob = emplace_back_id(nodes, KnobNode<float>(_warp_threshold));
         //auto iir_outw0_knob = emplace_back_id(nodes, KnobNode<float>(_iir_outw0));
 
-        auto noise = make_subgraph_id(nodes, [this](auto& nodes, auto& edges)
+        /*auto noise = make_subgraph_id(nodes, [this](auto& nodes, auto& edges)
         {
             auto knob = emplace_back_id(nodes, KnobNode<float>(_noise_level));
             auto generator = emplace_back_id(nodes, iv::UniformNoiseNode());
@@ -142,31 +122,16 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
             edges.insert(iv::GraphEdge { { sum,       0 }, { graph,    0 } });
 
             return std::make_tuple(0, 1);
-        });
+        });*/
 
-        auto midi_voice = make_subgraph([](auto& nodes, auto& edges)
+        auto midi_voice = make_subgraph([this](auto& nodes, auto& edges)
         {
             size_t amplitude_port = 0;
             size_t frequency_port = 1;
-            size_t voice_sample_rate_port = 2;
-            size_t voice_warp_threshold_port = 3;
-            size_t voice_noise_generator_port = 4;
+            size_t voice_warp_threshold_port = 2;
+            //size_t voice_noise_generator_port = 3;
 
-            auto integrator = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
-            {
-                // interface: { feedback, integrand, norm (sample rate) }
-                auto quotient = emplace_back_id(nodes, iv::QuotientNode());
-                auto sum = emplace_back_id(nodes, iv::SumNode());
-
-                edges.insert(iv::GraphEdge { { graph,    0 }, { sum,      0 } });
-                edges.insert(iv::GraphEdge { { graph,    1 }, { quotient, 0 } });
-                edges.insert(iv::GraphEdge { { graph,    2 }, { quotient, 1 } });
-                edges.insert(iv::GraphEdge { { quotient, 0 }, { sum,      1 } });
-                edges.insert(iv::GraphEdge { { sum,      0 }, { graph,    0 } });
-
-                return std::make_tuple(3, 1);
-            });
-
+            auto integrator = emplace_back_id(nodes, iv::Integrator(&_sample_rate));
             auto warper = emplace_back_id(nodes, iv::WarperNode());
 
             auto frequency = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
@@ -185,13 +150,12 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
 
             // main loop
             edges.insert(iv::GraphEdge { { integrator, 0 }, { warper,     0 } });
-            edges.insert(iv::GraphEdge { { warper,     1 }, { integrator, 1 } });
+            edges.insert(iv::GraphEdge { { warper,     1 }, { integrator, 0 } });
 
             // knobs
-            edges.insert(iv::GraphEdge { { frequency, 0 },                          { integrator, 0 } });
-            edges.insert(iv::GraphEdge { { graph,     voice_sample_rate_port },     { integrator, 2 } });
-            edges.insert(iv::GraphEdge { { graph,     voice_noise_generator_port }, { warper,     0 } });
+            edges.insert(iv::GraphEdge { { frequency, 0 },                          { integrator, 1 } });
             edges.insert(iv::GraphEdge { { graph,     voice_warp_threshold_port },  { warper,     1 } });
+            //edges.insert(iv::GraphEdge { { graph,     voice_noise_generator_port }, { warper,     0 } });
 
             // out
             auto amplitude = emplace_back_id(nodes, iv::ProductNode());
@@ -199,7 +163,7 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
             edges.insert(iv::GraphEdge { { warper,    0 },              { amplitude, 1 } });
             edges.insert(iv::GraphEdge { { amplitude, 0 },              { graph,     0 } });
 
-            return std::make_tuple(5, 1);
+            return std::make_tuple(3, 1);
         });
 
         auto midi_left = emplace_back_id(nodes, iv::MidiNode(midi_voice));
@@ -209,13 +173,11 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
         auto right_out = emplace_back_id(nodes, AudioStreamNode(_channels[1]));
 
         // shared inputs
-        edges.insert(iv::GraphEdge { { sample_rate, 0 }, { midi_left, 0 } });
-        edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_left, 1 } });
-        edges.insert(iv::GraphEdge { { noise, 0 }, { midi_left, 2 } });
+        edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_left, 0 } });
+        //edges.insert(iv::GraphEdge { { noise, 0 }, { midi_left, 2 } });
 
-        edges.insert(iv::GraphEdge { { sample_rate, 0 }, { midi_right, 0 } });
-        edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_right, 1 } });
-        edges.insert(iv::GraphEdge { { noise, 0 }, { midi_right, 2 } });
+        edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_right, 0 } });
+        //edges.insert(iv::GraphEdge { { noise, 0 }, { midi_right, 2 } });
 
         edges.insert(iv::GraphEdge { { midi_left, 0 }, { left_out, 0 } });
         edges.insert(iv::GraphEdge { { midi_right, 0 }, { right_out, 0 } });
@@ -269,6 +231,7 @@ void IntravenousAudioProcessor::changeProgramName(int index, const juce::String&
 }
 
 void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_per_block) {
+    _sample_rate = sample_rate;
     _midi_buffers.resize(samples_per_block);
     _midi_buffer_sizes.resize(samples_per_block, 0);
     _midi_buffers.shrink_to_fit();

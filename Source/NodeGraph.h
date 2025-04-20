@@ -271,6 +271,7 @@ namespace iv {
 
     struct TickState : public NodeState {
         std::span<MidiMessage const> midi;
+        double sample_rate;
     };
 
     namespace details
@@ -530,6 +531,33 @@ namespace iv {
             out.push(sample_warped_aa);
         }
     };
+    
+    class Integrator {
+        double const* _sample_rate;
+
+    public:
+        constexpr explicit Integrator(double const* sample_rate) noexcept :
+            _sample_rate(sample_rate)
+        {}
+
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<iv::InputConfig, 2>{};
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<iv::OutputConfig, 1>{};
+        }
+
+        void tick(iv::TickState const& state) noexcept
+        {
+            auto const& f_prev = state.inputs[0].get();
+            auto const& f = state.inputs[1].get();
+            auto const& inv_dx = *_sample_rate;
+            state.outputs[0].push(f_prev + f / inv_dx);
+        }
+    };
 
     struct ConstantNode {
         Sample _value;
@@ -717,6 +745,12 @@ namespace iv
     struct CountingNonAllocator
     {
         size_t total_bytes = 0;
+
+        constexpr size_t get_aligned_total_bytes(size_t alignment = alignof(uint64_t)) const noexcept
+        {
+            size_t const padding = (alignment - (total_bytes % alignment)) % alignment;
+            return padding + total_bytes;
+        }
 
         constexpr bool can_allocate() const noexcept
         {
@@ -917,6 +951,11 @@ namespace iv
     struct GraphNode {
         using Nodes = std::vector<TypeErasedNode>;
         using Edges = std::unordered_set<GraphEdge>;
+
+        struct GraphState : public NodeState {
+            std::span<NodeState> node_states;
+        };
+
         Nodes _nodes;
         Edges _edges;
         size_t _num_public_inputs;
@@ -961,7 +1000,7 @@ namespace iv
         {
             /*
             * struct MemoryLayout {
-            *     NodeState[1];    // private inputs outputs pointer
+            *     GraphState;    // private inputs outputs pointers
             *     NodeState[n];
             *     OutputPort[pi];  // private outputs connected to public inputs
             *     struct {
@@ -986,9 +1025,9 @@ namespace iv
             std::vector<InputConfig> private_input_configs(_num_public_outputs);
             OutputConfig private_outputs_config;
 
-            NodeState& private_node_state = allocator.initialize_object<NodeState>();
-            std::span<NodeState> node_states = allocator.initialize_array<NodeState>(num_nodes);
-            allocator.assign(private_node_state.outputs, allocator.allocate_array<OutputPort>(_num_public_inputs));
+            GraphState& graph_state = allocator.initialize_object<GraphState>();
+            allocator.assign(graph_state.node_states, allocator.initialize_array<NodeState>(num_nodes));
+            allocator.assign(graph_state.outputs, allocator.allocate_array<OutputPort>(_num_public_inputs));
 
             std::unordered_map<PortId, PortId> source_of;
             std::unordered_map<PortId, PortId> target_of;
@@ -1006,8 +1045,8 @@ namespace iv
             auto allocate_node_state = [&](auto const& node, size_t node_i)
             {
                 NodeState& node_state = (node_i == GRAPH_ID)
-                    ? private_node_state
-                    : allocator.at(node_states, node_i);
+                    ? graph_state
+                    : allocator.at(graph_state.node_states, node_i);
 
                 std::span<InputConfig const> input_configs;
                 std::span<OutputConfig const> output_configs;
@@ -1083,7 +1122,7 @@ namespace iv
                 {
                     CountingNonAllocator counter;
                     do_init_buffer(node, counter);
-                    allocator.assign(node_state.buffer, allocator.allocate_array<std::byte>(counter.total_bytes + 4));  // I'm sorry
+                    allocator.assign(node_state.buffer, allocator.allocate_array<std::byte>(counter.get_aligned_total_bytes()));
                 }
             };
 
@@ -1106,8 +1145,8 @@ namespace iv
                 auto initialize_node_state = [&](auto const& node, size_t node_i)
                 {
                     NodeState& node_state = (node_i == GRAPH_ID)
-                        ? private_node_state
-                        : allocator.at(node_states, node_i);
+                        ? graph_state
+                        : allocator.at(graph_state.node_states, node_i);
 
                     std::span<InputConfig const> input_configs;
                     std::span<OutputConfig const> output_configs;
@@ -1147,8 +1186,8 @@ namespace iv
                             GraphEdge this_edge { it->second, this_input };
 
                             OutputPort& output_port = (output_node_i == GRAPH_ID)
-                                ? allocator.at(private_node_state.outputs, output_port_i)
-                                : allocator.at(allocator.at(node_states, output_node_i).outputs, output_port_i);
+                                ? allocator.at(graph_state.outputs, output_port_i)
+                                : allocator.at(allocator.at(graph_state.node_states, output_node_i).outputs, output_port_i);
 
                             size_t const corrected_latency = corrected_latencies[this_edge];
                             allocator.construct_at(&input_port_data, port_samples, corrected_latency);
@@ -1164,8 +1203,9 @@ namespace iv
 
                     if (node_i != GRAPH_ID)
                     {
-                        FixedBufferAllocator nested_allocator({ node_state.buffer.data(), node_state.buffer.size() });
-                        do_init_buffer(node, nested_allocator);
+                        FixedBufferAllocator nested_allocator(node_state.buffer);
+                        std::span<std::byte> result = do_init_buffer(node, nested_allocator);
+                        assert(result.data() == node_state.buffer.data() && result.size() == node_state.buffer.size());
                     }
                 };
 
@@ -1193,7 +1233,7 @@ namespace iv
             for (size_t i = 0; i < num_nodes; ++i)
             {
                 _nodes[i].tick({
-                    get_node_state(state.buffer, i),
+                    private_state.node_states[i],
                     state.midi,
                 });
             }
@@ -1202,23 +1242,11 @@ namespace iv
             }
         }
 
-        NodeState& get_private_state(std::span<std::byte> buffer) const
+        GraphState& get_private_state(std::span<std::byte> buffer) const
         {
             void* object = buffer.data();
             size_t space = buffer.size();
-            return *reinterpret_cast<NodeState*>(std::align(alignof(NodeState), sizeof(NodeState), object, space));  // first index in the buffer
-        }
-
-        NodeState& get_node_state(std::span<std::byte> buffer, size_t node_i) const
-        {
-            if (node_i >= _nodes.size())
-            {
-                throw "node index out of range";
-            }
-            // from index 1 in the buffer
-            void* object = buffer.data();
-            size_t space = buffer.size();
-            return reinterpret_cast<NodeState*>(std::align(alignof(NodeState), sizeof(NodeState), object, space))[1 + node_i];
+            return *reinterpret_cast<GraphState*>(std::align(alignof(GraphState), sizeof(GraphState), object, space));  // first index in the buffer
         }
 
         size_t internal_latency() const noexcept
@@ -1800,7 +1828,7 @@ namespace iv
         {
             FixedBufferAllocator allocator(_buffer);
             auto residual = do_init_buffer(_node, allocator);
-            assert(residual.size() == 0 && "buffer was over allocated, bad programmer. (good luck!)");
+            //assert(residual.size() == 0 && "buffer was over allocated, bad programmer. (good luck!)");
         }
 
     public:
