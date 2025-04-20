@@ -2416,6 +2416,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\Source\NodeGraph.h" />
+    <ClInclude Include="..\..\Source\note_number_lookup_table.h" />
     <ClInclude Include="..\..\Source\PluginProcessor.h" />
     <ClInclude Include="..\..\Source\PluginEditor.h" />
     <ClInclude Include="..\..\..\..\Program Files\JUCE\modules\juce_audio_basics\audio_play_head\juce_AudioPlayHead.h" />

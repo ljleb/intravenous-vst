@@ -5753,6 +5753,9 @@
     <ClInclude Include="..\..\Source\NodeGraph.h">
       <Filter>Intravenous\Source</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\Source\note_number_lookup_table.h">
+      <Filter>Intravenous\Source</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\..\..\Program Files\JUCE\modules\juce_audio_devices\native\oboe\CMakeLists.txt">

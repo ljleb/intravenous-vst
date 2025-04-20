@@ -9,9 +9,10 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::atomic<float>* _noise_level;
     std::atomic<float>* _iir_outw0;
 
-    iv::NodeProcessor<> _node_processor;
-    iv::PortId _left_port, _right_port;
+    iv::NodeProcessor _node_processor;
+    iv::Sample* _channels[2];
     std::vector<std::array<iv::MidiMessage, 128>> _midi_buffers;
+    std::vector<uint8_t> _midi_buffer_sizes;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
@@ -34,7 +35,7 @@ public:
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
 private:
-    void init_graph();
+    iv::GraphNode init_graph();
 
 public:
     juce::AudioProcessorEditor* createEditor() override;
