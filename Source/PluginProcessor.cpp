@@ -199,7 +199,7 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
             edges.insert(iv::GraphEdge { { warper,    0 },              { amplitude, 1 } });
             edges.insert(iv::GraphEdge { { amplitude, 0 },              { graph,     0 } });
 
-            return std::make_tuple(6, 1);
+            return std::make_tuple(5, 1);
         });
 
         auto midi_left = emplace_back_id(nodes, iv::MidiNode(midi_voice));

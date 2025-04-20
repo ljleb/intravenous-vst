@@ -372,8 +372,11 @@ namespace iv {
             std::span<std::byte> memory_before = allocator.get_buffer();
             node.init_buffer(allocator);
             std::span<std::byte> memory_after = allocator.get_buffer();
-            assert(memory_before.end() == memory_after.end());
-            return { memory_before.data(), size_t(std::distance(memory_before.data(), memory_after.data())) };
+
+            std::byte* before_end = memory_before.data() + memory_before.size();
+            std::byte* after_end = memory_after.data() + memory_after.size();
+            assert(before_end == after_end);
+            return { memory_before.data(), memory_before.size() - memory_after.size() };
         }
         else
         {
@@ -636,7 +639,12 @@ namespace iv
     {
         std::span<std::byte> buffer;
 
-        constexpr std::span<std::byte> get_buffer() const
+        constexpr bool can_allocate() const noexcept
+        {
+            return true;
+        }
+
+        constexpr std::span<std::byte> get_buffer() const noexcept
         {
             return buffer;
         }
@@ -644,17 +652,28 @@ namespace iv
         template<typename T>
         auto initialize_array(size_t number)
         {
+            if (number == 0) return std::span<T>{};
             size_t num_bytes = number * sizeof(T);
-            if (num_bytes > buffer.size()) throw "buffer is too small!";
-            auto ptr = ::new (buffer.data()) T[number];
-            buffer = buffer.subspan(num_bytes, buffer.size() - num_bytes);
+            size_t const alignment = alignof(T);
+            void* buffer_start = buffer.data();
+            size_t space_left = buffer.size();
+            if (!std::align(alignof(T), num_bytes, buffer_start, space_left)) throw std::bad_alloc();
+            T* ptr = ::new (buffer_start) T[number];
+            buffer = { static_cast<std::byte*>(buffer_start) + num_bytes, space_left - num_bytes };
             return std::span<T> { ptr, number };
         };
 
         template<typename T>
         T& initialize_object()
         {
-            return initialize_array<T>(1)[0];
+            size_t num_bytes = sizeof(T);
+            size_t const alignment = alignof(T);
+            void* buffer_start = buffer.data();
+            size_t space_left = buffer.size();
+            if (!std::align(alignof(T), num_bytes, buffer_start, space_left)) throw std::bad_alloc();
+            T* ptr = ::new (buffer_start) T;
+            buffer = { static_cast<std::byte*>(buffer_start) + num_bytes, space_left - num_bytes };
+            return *ptr;
         }
 
         template<typename T>
@@ -699,20 +718,26 @@ namespace iv
     {
         size_t total_bytes = 0;
 
-        constexpr std::span<std::byte> get_buffer() const
+        constexpr bool can_allocate() const noexcept
         {
-            return { static_cast<std::byte*>(nullptr), std::numeric_limits<size_t>::max()-10 };
+            return false;
         }
 
-        void advance_buffer(size_t number)
+        constexpr std::span<std::byte> get_buffer() const
         {
-            total_bytes += number;
+            return { static_cast<std::byte*>(nullptr) + total_bytes, std::numeric_limits<uint32_t>::max() - total_bytes };
+        }
+
+        void advance_buffer(size_t number, size_t alignment)
+        {
+            size_t const padding = (alignment - (total_bytes % alignment)) % alignment;
+            total_bytes += padding + number;
         };
 
         template<typename T>
         auto initialize_array(size_t number)
         {
-            advance_buffer(number * sizeof(T));
+            advance_buffer(sizeof(T) * number, alignof(T));
             return std::span<T> { static_cast<T*>(nullptr), number };
         };
 
@@ -720,7 +745,7 @@ namespace iv
         T& initialize_object()
         {
             static AlignedStorage<T> storage;
-            advance_buffer(sizeof(T));
+            advance_buffer(sizeof(AlignedStorage<T>), alignof(AlignedStorage<T>));
             return storage.object;
         }
 
@@ -761,62 +786,66 @@ namespace iv
         {}
     };
 
-    using AnyAllocator = std::variant<FixedBufferAllocator, CountingNonAllocator>;
     struct TypeErasedAllocator
     {
-        AnyAllocator _allocator;
+        std::variant<std::reference_wrapper<FixedBufferAllocator>, std::reference_wrapper<CountingNonAllocator>> _allocator;
+
+        constexpr bool can_allocate() const noexcept
+        {
+            return std::visit([](auto&& allocator) { return allocator.get().can_allocate(); }, _allocator);
+        }
 
         constexpr std::span<std::byte> get_buffer() const
         {
-            return std::visit([](auto&& allocator) { return allocator.get_buffer(); }, _allocator);
+            return std::visit([](auto&& allocator) { return allocator.get().get_buffer(); }, _allocator);
         }
 
         template<typename T>
         auto initialize_array(size_t number)
         {
-            return std::visit([=](auto&& allocator) { return allocator.initialize_array<T>(number); }, _allocator);
+            return std::visit([=](auto&& allocator) { return allocator.get().initialize_array<T>(number); }, _allocator);
         };
 
         template<typename T>
         auto initialize_object() -> T&
         {
-            return std::visit([](auto&& allocator) -> T& { return allocator.initialize_object<T>(); }, _allocator);
+            return std::visit([](auto&& allocator) -> T& { return allocator.get().initialize_object<T>(); }, _allocator);
         }
 
         template<typename T>
         auto allocate_array(size_t number)
         {
-            return std::visit([=](auto&& allocator) { return allocator.allocate_array<T>(number); }, _allocator);
+            return std::visit([=](auto&& allocator) { return allocator.get().allocate_array<T>(number); }, _allocator);
         };
 
         template<typename T, typename... Args>
         void construct_at(T* ptr, Args&&... args) const
         {
-            std::visit([&](auto&& allocator) { return allocator.construct_at(ptr, std::forward<Args>(args)...); }, _allocator);
+            std::visit([&](auto&& allocator) { return allocator.get().construct_at(ptr, std::forward<Args>(args)...); }, _allocator);
         }
 
         template<typename T, typename U>
         constexpr T& assign(T& t, U&& u) const
         {
-            return std::visit([&](auto&& allocator) -> T& { return allocator.assign(t, std::forward<U>(u)); }, _allocator);
+            return std::visit([&](auto&& allocator) -> T& { return allocator.get().assign(t, std::forward<U>(u)); }, _allocator);
         }
 
         template<typename T>
         constexpr auto at(std::span<T> t, size_t i) const -> T&
         {
-            return std::visit([&](auto&& allocator) -> T& { return allocator.at(t, i); }, _allocator);
+            return std::visit([&](auto&& allocator) -> T& { return allocator.get().at(t, i); }, _allocator);
         }
 
         template<typename T, size_t N>
         constexpr auto at(std::array<T, N>& t, size_t i) const -> T&
         {
-            return std::visit([&](auto&& allocator) -> T& { return allocator.at(t, i); }, _allocator);
+            return std::visit([&](auto&& allocator) -> T& { return allocator.get().at(t, i); }, _allocator);
         }
 
         template<typename R, typename T>
         void fill_n(R& r, T&& t) const
         {
-            std::visit([&](auto&& allocator) { return allocator.fill_n(r, std::forward<T>(t)); }, _allocator);
+            std::visit([&](auto&& allocator) { return allocator.get().fill_n(r, std::forward<T>(t)); }, _allocator);
         }
     };
 
@@ -867,7 +896,7 @@ namespace iv
         }
 
         template<typename Allocator>
-        constexpr std::span<std::byte> init_buffer(Allocator&& allocator) const noexcept
+        constexpr std::span<std::byte> init_buffer(Allocator& allocator) const noexcept
         {
             return _init_buffer_fn(_node.get(), TypeErasedAllocator{allocator});
         }
@@ -904,6 +933,7 @@ namespace iv
         {
             expand_hyperedge_ports();
             sort_nodes();
+            validate_graph();
         }
 
         constexpr auto inputs() const noexcept
@@ -969,50 +999,48 @@ namespace iv
             }
 
             std::unordered_map<PortId, size_t> input_port_global_latencies;
-
-            auto setup_node_state = [&](TypeErasedNode const& node, size_t node_i)
+            std::unordered_map<GraphEdge, size_t> corrected_latencies;
+            std::unordered_map<PortId, std::span<Sample>> input_ports_samples;
+            std::unordered_map<size_t, std::span<SharedPortData>> node_port_data;
+            
+            auto allocate_node_state = [&](auto const& node, size_t node_i)
             {
-                NodeState& node_state = (node_i != GRAPH_ID)
-                    ? allocator.at(node_states, node_i)
-                    : private_node_state;
-
-                std::span<SharedPortData> input_port_data = allocator.allocate_array<SharedPortData>(get_num_inputs(node));
-                if (node_i != GRAPH_ID)
-                {
-                    allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(get_num_outputs(node)));
-                    allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(get_num_inputs(node)));
-                }
-                else
-                {
-                    // private inputs
-                    allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(_num_public_outputs));
-                }
+                NodeState& node_state = (node_i == GRAPH_ID)
+                    ? private_node_state
+                    : allocator.at(node_states, node_i);
 
                 std::span<InputConfig const> input_configs;
-                if (node_i != GRAPH_ID)
+                std::span<OutputConfig const> output_configs;
+                if (node_i == GRAPH_ID)
                 {
-                    input_configs = get_inputs(node);
+                    // private inputs
+                    input_configs = private_input_configs;
+                    // no outputs, public are handled by parent node and private are handled by the children nodes connected to them
                 }
                 else
                 {
-                    input_configs = private_input_configs;
+                    input_configs = get_inputs(node);
+                    output_configs = get_outputs(node);
                 }
+                size_t const num_inputs = input_configs.size();
+                size_t const num_outputs = output_configs.size();
+                node_port_data[node_i] = allocator.allocate_array<SharedPortData>(num_inputs);
+                if (node_i != GRAPH_ID) allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(num_outputs));
+                allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(num_inputs));
 
                 // align latencies
                 size_t node_global_latency = 0;
-                std::vector<size_t> input_port_extra_latencies(input_configs.size());
-                for (size_t in_port = 0; in_port < input_configs.size(); ++in_port)
+                std::vector<size_t> input_port_extra_latencies(num_inputs);
+                for (size_t in_port = 0; in_port < num_inputs; ++in_port)
                 {
                     node_global_latency = std::max(node_global_latency, input_port_global_latencies[{ node_i, in_port }]);
                 }
-                for (size_t in_port = 0; in_port < input_configs.size(); ++in_port)
+                for (size_t in_port = 0; in_port < num_inputs; ++in_port)
                 {
                     input_port_extra_latencies[in_port] += node_global_latency - input_port_global_latencies[{ node_i, in_port }];
                 }
                 if (node_i != GRAPH_ID) {
-                    size_t const num_outputs = get_num_outputs(node);
                     node_global_latency += get_internal_latency(node);
-                    auto output_configs = get_outputs(node);
                     for (size_t out_port = 0; out_port < num_outputs; ++out_port)
                     {
                         size_t output_latency = node_global_latency + output_configs[out_port].latency;
@@ -1021,56 +1049,136 @@ namespace iv
                     }
                 }
 
-                std::span<InputPort> input_ports = node_state.inputs;
-                for (size_t input_i = 0; input_i < input_configs.size(); ++input_i)
+                for (size_t input_i = 0; input_i < num_inputs; ++input_i)
                 {
+                    PortId this_input { node_i, input_i };
                     InputConfig const& input_config = input_configs[input_i];
-                    InputPort& input_port = allocator.at(input_ports, input_i);
+                    size_t num_port_samples;
 
-                    if (auto it = source_of.find({ node_i, input_i }); it != source_of.end())
+                    if (auto it = source_of.find(this_input); it != source_of.end())
                     {
                         // input is connected to output, let's setup both
                         size_t output_node_i = it->second.node;
                         size_t output_port_i = it->second.port;
+                        GraphEdge this_edge { it->second, this_input };
 
-                        OutputConfig const& output_config = (output_node_i != GRAPH_ID)
-                            ? get_outputs(_nodes[output_node_i])[output_port_i]
-                            : private_outputs_config;
-                        OutputPort& output_port = (output_node_i != GRAPH_ID)
-                            ? allocator.at(private_node_state.outputs, output_port_i)
-                            : allocator.at(allocator.at(node_states, output_node_i).outputs, output_port_i);
+                        OutputConfig const& output_config = (output_node_i == GRAPH_ID)
+                            ? private_outputs_config
+                            : get_outputs(_nodes[output_node_i])[output_port_i];
 
-                        auto num_port_samples = calculate_port_buffer_size(output_config.latency + input_port_extra_latencies[input_i], input_config.history);
-                        auto input_samples = allocator.initialize_array<Sample>(num_port_samples);
-                        allocator.construct_at(&allocator.at(input_port_data, input_i), input_samples, output_config.latency);
-                        allocator.construct_at(&output_port, allocator.at(input_port_data, input_i));
+                        size_t const corrected_latency = output_config.latency + input_port_extra_latencies[input_i];
+                        corrected_latencies.insert({ this_edge, corrected_latency });
+                        num_port_samples = calculate_port_buffer_size(corrected_latency, input_config.history);
                     }
                     else
                     {
-                        // input is disconnected: init dummy buffer
-                        auto num_port_samples = calculate_port_buffer_size(0, input_config.history);
-                        auto input_samples = allocator.initialize_array<Sample>(num_port_samples);
-                        allocator.construct_at(&input_port_data[input_i], input_samples, 0);
+                        // input is disconnected, no corresponding output port
+                        num_port_samples = calculate_port_buffer_size(0, input_config.history);
                     }
-                    allocator.construct_at(&input_port, input_port_data[input_i], input_config.history);
-                    if (input_config.default_value)
-                    {
-                        allocator.fill_n(allocator.at(input_port_data, input_i).buffer, input_config.default_value);
-                    }
+
+                    input_ports_samples.insert({ this_input, allocator.allocate_array<Sample>(num_port_samples) });
                 }
 
-                allocator.assign(node_state.buffer, do_init_buffer(_nodes[node_i], allocator));
+                if (node_i != GRAPH_ID)
+                {
+                    CountingNonAllocator counter;
+                    do_init_buffer(node, counter);
+                    allocator.assign(node_state.buffer, allocator.allocate_array<std::byte>(counter.total_bytes + 4));  // I'm sorry
+                }
             };
 
             for (size_t node_i = 0; node_i < num_nodes + 1; ++node_i)
             {
                 if (node_i < num_nodes)
                 {
-                    setup_node_state(_nodes[node_i], node_i);
+                    allocate_node_state(_nodes[node_i], node_i);
                 }
                 else if (node_i == num_nodes)
                 {
-                    setup_node_state(*this, GRAPH_ID);
+                    allocate_node_state(*this, GRAPH_ID);
+                }
+            }
+
+            if (allocator.can_allocate())
+            {
+                // memory was allocated, now let's initialize it
+
+                auto initialize_node_state = [&](auto const& node, size_t node_i)
+                {
+                    NodeState& node_state = (node_i == GRAPH_ID)
+                        ? private_node_state
+                        : allocator.at(node_states, node_i);
+
+                    std::span<InputConfig const> input_configs;
+                    std::span<OutputConfig const> output_configs;
+                    if (node_i == GRAPH_ID)
+                    {
+                        // private inputs
+                        input_configs = private_input_configs;
+                        // no outputs, public are handled by parent node and private are handled by the children nodes connected to them
+                    }
+                    else
+                    {
+                        input_configs = get_inputs(node);
+                        output_configs = get_outputs(node);
+                    }
+                    size_t const num_inputs = input_configs.size();
+                    size_t const num_outputs = output_configs.size();
+                    std::span<SharedPortData> inputs_port_data = node_port_data[node_i];
+
+                    for (size_t input_i = 0; input_i < num_inputs; ++input_i)
+                    {
+                        PortId this_input { node_i, input_i };
+                        InputConfig const& input_config = input_configs[input_i];
+                        InputPort& input_port = allocator.at(node_state.inputs, input_i);
+                        SharedPortData& input_port_data = allocator.at(inputs_port_data, input_i);
+                        std::span<Sample> port_samples = input_ports_samples.at(this_input);
+
+                        if (input_config.default_value)
+                        {
+                            allocator.fill_n(port_samples, input_config.default_value);
+                        }
+
+                        if (auto it = source_of.find({ node_i, input_i }); it != source_of.end())
+                        {
+                            // input is connected to output, let's setup both
+                            size_t output_node_i = it->second.node;
+                            size_t output_port_i = it->second.port;
+                            GraphEdge this_edge { it->second, this_input };
+
+                            OutputPort& output_port = (output_node_i == GRAPH_ID)
+                                ? allocator.at(private_node_state.outputs, output_port_i)
+                                : allocator.at(allocator.at(node_states, output_node_i).outputs, output_port_i);
+
+                            size_t const corrected_latency = corrected_latencies[this_edge];
+                            allocator.construct_at(&input_port_data, port_samples, corrected_latency);
+                            allocator.construct_at(&output_port, input_port_data);
+                        }
+                        else
+                        {
+                            // input is disconnected: init dummy buffer
+                            allocator.construct_at(&input_port_data, port_samples, 0);
+                        }
+                        allocator.construct_at(&input_port, input_port_data, input_config.history);
+                    }
+
+                    if (node_i != GRAPH_ID)
+                    {
+                        FixedBufferAllocator nested_allocator({ node_state.buffer.data(), node_state.buffer.size() });
+                        do_init_buffer(node, nested_allocator);
+                    }
+                };
+
+                for (size_t node_i = 0; node_i < num_nodes + 1; ++node_i)
+                {
+                    if (node_i < num_nodes)
+                    {
+                        initialize_node_state(_nodes[node_i], node_i);
+                    }
+                    else if (node_i == num_nodes)
+                    {
+                        initialize_node_state(*this, GRAPH_ID);
+                    }
                 }
             }
         }
@@ -1096,7 +1204,9 @@ namespace iv
 
         NodeState& get_private_state(std::span<std::byte> buffer) const
         {
-            return reinterpret_cast<NodeState*>(buffer.data())[0];  // first index in the buffer
+            void* object = buffer.data();
+            size_t space = buffer.size();
+            return *reinterpret_cast<NodeState*>(std::align(alignof(NodeState), sizeof(NodeState), object, space));  // first index in the buffer
         }
 
         NodeState& get_node_state(std::span<std::byte> buffer, size_t node_i) const
@@ -1106,7 +1216,9 @@ namespace iv
                 throw "node index out of range";
             }
             // from index 1 in the buffer
-            return ((NodeState*)buffer.data())[1 + node_i];
+            void* object = buffer.data();
+            size_t space = buffer.size();
+            return reinterpret_cast<NodeState*>(std::align(alignof(NodeState), sizeof(NodeState), object, space))[1 + node_i];
         }
 
         size_t internal_latency() const noexcept
@@ -1161,19 +1273,20 @@ namespace iv
     private:
         void expand_hyperedge_ports()
         {
-            std::unordered_map<PortId, std::vector<GraphEdge>> edges_map;
+            std::unordered_map<PortId, std::vector<GraphEdge>> reverse_edges_map;
             for (GraphEdge const& edge : _edges)
             {
-                edges_map[edge.source].push_back(edge);
+                reverse_edges_map[edge.target].push_back(edge);
             }
 
-            for (size_t node = 0; node < _nodes.size(); ++node)
+            size_t nodes_size = _nodes.size();
+            for (size_t node = 0; node < nodes_size; ++node)
             {
                 size_t const num_inputs = get_num_inputs(_nodes[node]);
                 for (size_t in_port = 0; in_port < num_inputs; ++in_port)
                 {
-                    auto it = edges_map.find({ node, in_port });
-                    if (it == edges_map.end()) continue;
+                    auto it = reverse_edges_map.find({ node, in_port });
+                    if (it == reverse_edges_map.end()) continue;
                     auto const& edges_to_expand = it->second;
                     size_t const port_arity = edges_to_expand.size();
                     if (port_arity <= 1) continue;
@@ -1185,19 +1298,20 @@ namespace iv
                     {
                         GraphEdge const& to_rewire = edges_to_expand[out_port];
                         _edges.erase(to_rewire);
-                        _edges.insert({ to_rewire.source, { sum_node, out_port } });
+                        _edges.insert(GraphEdge { to_rewire.source, { sum_node, out_port } });
                     }
-                    _edges.insert({ { sum_node, 0 }, { node, in_port } });
+                    _edges.insert(GraphEdge { { sum_node, 0 }, { node, in_port } });
                 }
             }
 
-            std::unordered_map<PortId, std::vector<GraphEdge>> reverse_edges_map;
+            std::unordered_map<PortId, std::vector<GraphEdge>> edges_map;
             for (GraphEdge const& edge : _edges)
             {
-                reverse_edges_map[edge.target].push_back(edge);
+                edges_map[edge.source].push_back(edge);
             }
 
-            for (size_t node = 0; node < _nodes.size(); ++node)
+            nodes_size = _nodes.size();
+            for (size_t node = 0; node < nodes_size; ++node)
             {
                 size_t const num_outputs = get_num_outputs(_nodes[node]);
                 for (size_t out_port = 0; out_port < num_outputs; ++out_port)
@@ -1215,9 +1329,9 @@ namespace iv
                     {
                         GraphEdge const& to_rewire = edges_to_expand[in_port];
                         _edges.erase(to_rewire);
-                        _edges.insert({ { broadcast_node, in_port }, to_rewire.target });
+                        _edges.insert(GraphEdge { { broadcast_node, in_port }, to_rewire.target });
                     }
-                    _edges.insert({ { node, out_port }, { broadcast_node, 0 } });
+                    _edges.insert(GraphEdge { { node, out_port }, { broadcast_node, 0 } });
                 }
             }
         }
@@ -1368,17 +1482,53 @@ namespace iv
             }
             _nodes.swap(sorted_nodes);
 
+            std::vector<size_t> reverse_sorted(n);
+            std::iota(reverse_sorted.begin(), reverse_sorted.end(), 0);
+            std::stable_sort(
+                reverse_sorted.begin(), reverse_sorted.end(),
+                [&](int i1, int i2) {return sorted[i1] < sorted[i2]; });
+            
             Edges sorted_edges;
             sorted_edges.reserve(_edges.size());
-            for (auto edge : _edges)
+            for (GraphEdge edge : _edges)
             {
                 if (edge.source.node != GRAPH_ID)
-                    edge.source.node = sorted[edge.source.node];
+                    edge.source.node = reverse_sorted[edge.source.node];
                 if (edge.target.node != GRAPH_ID)
-                    edge.target.node = sorted[edge.target.node];
+                    edge.target.node = reverse_sorted[edge.target.node];
                 sorted_edges.insert(edge);
             }
             _edges.swap(sorted_edges);
+        }
+
+        void validate_graph() const
+        {
+            std::vector<InputConfig> _private_input_configs(_num_public_outputs);
+            std::vector<OutputConfig> _private_output_configs(_num_public_inputs);
+
+            for (auto const& edge : _edges)
+            {
+                std::span<OutputConfig const> source_outputs;
+                if (edge.source.node == GRAPH_ID)
+                {
+                    source_outputs = _private_output_configs;
+                }
+                else
+                {
+                    source_outputs = get_outputs(_nodes[edge.source.node]);
+                }
+                std::span<InputConfig const> target_inputs;
+                if (edge.target.node == GRAPH_ID)
+                {
+                    target_inputs = _private_input_configs;
+                }
+                else
+                {
+                    target_inputs = get_inputs(_nodes[edge.target.node]);
+                }
+                assert(edge.source.port < source_outputs.size() && "bad connection");
+                assert(edge.target.port < target_inputs.size() && "bad connection");
+            }
         }
     };
 
@@ -1543,9 +1693,9 @@ namespace iv
 
                 note_state.inputs[0].push(Sample(note_state.amplitude / 127.0));
                 note_state.inputs[1].push(Sample(NOTE_NUMBER_TO_FREQUENCY[note_number]));
-                for (size_t extra_i = 0; extra_i < midi_state.inputs.size() - MIN_INPUTS; ++extra_i)
+                for (size_t extra_i = 0; extra_i < midi_state.inputs.size() - MIN_GRAPH_INPUTS; ++extra_i)
                 {
-                    note_state.inputs[MIN_GRAPH_INPUTS+extra_i].push(midi_state.inputs[extra_i+MIN_INPUTS].get());
+                    note_state.inputs[extra_i+MIN_GRAPH_INPUTS].push(state.inputs[extra_i+MIN_INPUTS].get());
                 }
                 _graph_node.tick({ note_state, state.midi });
                 result += note_state.outputs[0].get();
@@ -1626,7 +1776,9 @@ namespace iv
 
         MidiState& get_midi_state(NodeState const& state) const noexcept
         {
-            return *reinterpret_cast<MidiState*>(state.buffer.data());
+            void* object = state.buffer.data();
+            size_t size = state.buffer.size();
+            return *reinterpret_cast<MidiState*>(std::align(alignof(MidiState), sizeof(MidiState), object, size));
         }
     };
 
@@ -1640,7 +1792,7 @@ namespace iv
         void resize_buffer()
         {
             CountingNonAllocator buffer_counter;
-            _node.init_buffer(buffer_counter);
+            do_init_buffer(_node, buffer_counter);
             _buffer.resize(buffer_counter.total_bytes);
         }
 
