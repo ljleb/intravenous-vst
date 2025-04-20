@@ -584,8 +584,7 @@ namespace iv {
             _min(min),
             _max(max),
             _seed(seed)
-        {
-        }
+        {}
 
         constexpr auto outputs() const noexcept
         {
@@ -611,8 +610,7 @@ namespace iv {
 
         constexpr explicit AlignedStorage() :
             uninitialized_object{}
-        {
-        }
+        {}
     };
 
     struct PortId {
@@ -736,15 +734,16 @@ namespace iv
         }
     };
 
-    struct CountingNonAllocator
+    class CountingNonAllocator
     {
-        size_t total_bytes = 0;
+        static constexpr size_t MAX_ALLOCATION = std::numeric_limits<uint32_t>::max();
+        std::byte* _memory_hint = nullptr;
+        size_t total_bytes = MAX_ALLOCATION;
 
-        constexpr size_t get_aligned_total_bytes(size_t alignment = alignof(max_align_t)) const noexcept
-        {
-            size_t const padding = (alignment - (total_bytes % alignment)) % alignment;
-            return padding + total_bytes;
-        }
+    public:
+        explicit CountingNonAllocator(std::byte* memory_hint) :
+            _memory_hint(memory_hint)
+        {}
 
         constexpr bool can_allocate() const noexcept
         {
@@ -753,19 +752,30 @@ namespace iv
 
         constexpr std::span<std::byte> get_buffer() const
         {
-            return { static_cast<std::byte*>(nullptr) + total_bytes, std::numeric_limits<uint32_t>::max() - total_bytes };
+            return { _memory_hint, total_bytes };
         }
 
-        void advance_buffer(size_t number, size_t alignment)
+        constexpr size_t estimate_buffer_size() const
         {
-            size_t const padding = (alignment - (total_bytes % alignment)) % alignment;
-            total_bytes += padding + number;
+            return MAX_ALLOCATION - total_bytes;
+        }
+
+        template<typename T>
+        void advance_buffer(size_t number)
+        {
+            if (number == 0) return;
+            size_t const alignment = alignof(T);
+            size_t const num_bytes = number * sizeof(T);
+            void* buffer_start = static_cast<void*>(_memory_hint);
+            if (!std::align(alignment, num_bytes, buffer_start, total_bytes)) throw std::bad_alloc();
+            _memory_hint = static_cast<std::byte*>(buffer_start) + num_bytes;
+            total_bytes -= num_bytes;
         };
 
         template<typename T>
         auto initialize_array(size_t number)
         {
-            advance_buffer(sizeof(T) * number, alignof(T));
+            advance_buffer<T>(number);
             return std::span<T> { static_cast<T*>(nullptr), number };
         };
 
@@ -773,7 +783,7 @@ namespace iv
         T& initialize_object()
         {
             static AlignedStorage<T> storage;
-            advance_buffer(sizeof(AlignedStorage<T>), alignof(AlignedStorage<T>));
+            advance_buffer<AlignedStorage<T>>(1);
             return storage.object;
         }
 
@@ -1114,9 +1124,9 @@ namespace iv
 
                 if (node_i != GRAPH_ID)
                 {
-                    CountingNonAllocator counter;
+                    CountingNonAllocator counter(allocator.get_buffer().data());
                     do_init_buffer(node, counter);
-                    allocator.assign(node_state.buffer, allocator.allocate_array<std::byte>(counter.get_aligned_total_bytes()));
+                    allocator.assign(node_state.buffer, allocator.allocate_array<std::byte>(counter.estimate_buffer_size()));
                 }
             };
 
@@ -1804,8 +1814,12 @@ namespace iv
         }
     };
 
+    struct alignas(max_align_t) AlignedBytes {
+        std::byte b[alignof(max_align_t)];
+    };
+
     class NodeProcessor {
-        using Buffer = std::vector<std::byte>;
+        using Buffer = std::vector<AlignedBytes>;
 
         GraphNode _node;
         Buffer _buffer;
@@ -1813,16 +1827,24 @@ namespace iv
 
         void resize_buffer()
         {
-            CountingNonAllocator buffer_counter;
-            do_init_buffer(_node, buffer_counter);
-            _buffer.resize(buffer_counter.total_bytes);
+            _buffer.reserve(1);
+            std::byte* byte_data = reinterpret_cast<std::byte*>(_buffer.data());
+            CountingNonAllocator counter(byte_data);
+            do_init_buffer(_node, counter);
+            _buffer.resize(counter.estimate_buffer_size());
         }
 
         void initialize_graph()
         {
-            FixedBufferAllocator allocator(_buffer);
-            auto residual = do_init_buffer(_node, allocator);
-            //assert(residual.size() == 0 && "buffer was over allocated, bad programmer. (good luck!)");
+            FixedBufferAllocator allocator({
+                reinterpret_cast<std::byte*>(_buffer.data()),
+                _buffer.size() * sizeof(AlignedBytes)
+            });
+            auto allocated = do_init_buffer(_node, allocator);
+            assert(
+                _buffer.size() - allocated.size() < alignof(max_align_t) &&
+                "buffer was over allocated"
+            );
         }
 
     public:
@@ -1838,7 +1860,11 @@ namespace iv
 
         void tick(std::span<MidiMessage const> midi) noexcept
         {
-            _node.tick({ NodeState { .buffer = _buffer }, midi });
+            std::span<std::byte> buffer_span {
+                reinterpret_cast<std::byte*>(_buffer.data()),
+                _buffer.size() * sizeof(AlignedBytes)
+            };
+            _node.tick({ NodeState { .buffer = buffer_span }, midi });
         }
     };
 }

@@ -111,25 +111,25 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
         auto warp_threshold_knob = emplace_back_id(nodes, KnobNode<float>(_warp_threshold));
         //auto iir_outw0_knob = emplace_back_id(nodes, KnobNode<float>(_iir_outw0));
 
-        /*auto noise = make_subgraph_id(nodes, [this](auto& nodes, auto& edges)
+        auto noise = make_subgraph_id(nodes, [this](auto& nodes, auto& edges)
         {
             auto knob = emplace_back_id(nodes, KnobNode<float>(_noise_level));
             auto generator = emplace_back_id(nodes, iv::UniformNoiseNode());
-            auto sum = emplace_back_id(nodes, iv::SumNode());
+            auto product = emplace_back_id(nodes, iv::ProductNode());
 
-            edges.insert(iv::GraphEdge { { knob,      0 }, { sum,      0 } });
-            edges.insert(iv::GraphEdge { { generator, 0 }, { sum,      1 } });
-            edges.insert(iv::GraphEdge { { sum,       0 }, { graph,    0 } });
+            edges.insert(iv::GraphEdge { { knob,      0 }, { product, 0 } });
+            edges.insert(iv::GraphEdge { { generator, 0 }, { product, 1 } });
+            edges.insert(iv::GraphEdge { { product,   0 }, { graph,   0 } });
 
             return std::make_tuple(0, 1);
-        });*/
+        });
 
         auto midi_voice = make_subgraph([this](auto& nodes, auto& edges)
         {
             size_t amplitude_port = 0;
             size_t frequency_port = 1;
             size_t voice_warp_threshold_port = 2;
-            //size_t voice_noise_generator_port = 3;
+            size_t voice_noise_generator_port = 3;
 
             auto integrator = emplace_back_id(nodes, iv::Integrator(&_sample_rate));
             auto warper = emplace_back_id(nodes, iv::WarperNode());
@@ -155,7 +155,7 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
             // knobs
             edges.insert(iv::GraphEdge { { frequency, 0 },                          { integrator, 1 } });
             edges.insert(iv::GraphEdge { { graph,     voice_warp_threshold_port },  { warper,     1 } });
-            //edges.insert(iv::GraphEdge { { graph,     voice_noise_generator_port }, { warper,     0 } });
+            edges.insert(iv::GraphEdge { { graph,     voice_noise_generator_port }, { warper,     0 } });
 
             // out
             auto amplitude = emplace_back_id(nodes, iv::ProductNode());
@@ -163,7 +163,7 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
             edges.insert(iv::GraphEdge { { warper,    0 },              { amplitude, 1 } });
             edges.insert(iv::GraphEdge { { amplitude, 0 },              { graph,     0 } });
 
-            return std::make_tuple(3, 1);
+            return std::make_tuple(4, 1);
         });
 
         auto midi_left = emplace_back_id(nodes, iv::MidiNode(midi_voice));
@@ -174,10 +174,10 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
 
         // shared inputs
         edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_left, 0 } });
-        //edges.insert(iv::GraphEdge { { noise, 0 }, { midi_left, 2 } });
+        edges.insert(iv::GraphEdge { { noise, 0 }, { midi_left, 1 } });
 
         edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_right, 0 } });
-        //edges.insert(iv::GraphEdge { { noise, 0 }, { midi_right, 2 } });
+        edges.insert(iv::GraphEdge { { noise, 0 }, { midi_right, 1 } });
 
         edges.insert(iv::GraphEdge { { midi_left, 0 }, { left_out, 0 } });
         edges.insert(iv::GraphEdge { { midi_right, 0 }, { right_out, 0 } });
