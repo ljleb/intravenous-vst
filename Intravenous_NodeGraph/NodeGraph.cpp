@@ -1,5 +1,4 @@
-﻿#pragma once
-#include <vector>
+﻿#include <vector>
 #include <array>
 #include <memory>
 #include <span>
@@ -21,7 +20,6 @@
 
 
 namespace constexpr_math {
-
     // constexpr signbit
     template<typename T>
     constexpr bool signbit(T x) noexcept {
@@ -91,17 +89,17 @@ namespace iv {
         RIGHT,
     };
 
-    static bool is_power_of_2(size_t n) noexcept
+    __forceinline static bool is_power_of_2(size_t n) noexcept
     {
         return n && !(n & (n - 1));
     }
 
-    static Sample polyblep_phi(Sample sample, Sample warp_threshold) noexcept
+    __forceinline static Sample polyblep_phi(Sample sample, Sample warp_threshold) noexcept
     {
         return Sample((sample + warp_threshold) / 2.0);
     }
 
-    static Sample polyblep_p(Sample phi, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
+    __forceinline static Sample polyblep_p(Sample phi, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
     {
         if (side == PolyblepSide::RIGHT && phi < delta)
         {
@@ -117,7 +115,7 @@ namespace iv {
         return 0;
     }
 
-    static Sample polyblep_error(Sample sample, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
+    __forceinline static Sample polyblep_error(Sample sample, Sample delta, Sample warp_threshold, PolyblepSide side) noexcept
     {
         Sample sign = std::copysign(1.0, delta);
         delta = std::copysign(delta, 1.0);
@@ -127,7 +125,7 @@ namespace iv {
         return p;
     }
 
-    static inline Sample warp_pm1(Sample x, Sample limit) noexcept
+    __forceinline static inline Sample warp_pm1(Sample x, Sample limit) noexcept
     {
         Sample period = Sample(2.0 * limit);
         return x - std::floor((x + limit) / period) * period;
@@ -184,32 +182,32 @@ namespace iv {
             }
         }
 
-        constexpr Sample get(size_t offset = 0) const noexcept
+        __forceinline constexpr Sample get(size_t offset = 0) const noexcept
         {
             if (offset > _history) return 0.0;
             size_t idx = (_shared_data.position + _shared_data.buffer.size() - offset) & (_shared_data.buffer.size() - 1);
             return _shared_data.buffer[idx];
         }
 
-        constexpr void push(Sample value) noexcept
+        __forceinline constexpr void push(Sample value) noexcept
         {
             _shared_data.position = (_shared_data.position + 1) & (_shared_data.buffer.size() - 1);
-            _shared_data.buffer[_shared_data.position] = value;
+            update(value);
         }
 
-        constexpr void update(Sample value, size_t offset = 0) noexcept
+        __forceinline constexpr void update(Sample value, size_t offset = 0) noexcept
         {
             if (offset > _shared_data.latency) return;
             size_t idx = (_shared_data.position + _shared_data.latency - offset) & (_shared_data.buffer.size() - 1);
             _shared_data.buffer[idx] = value;
         }
 
-        constexpr size_t latency() noexcept
+        __forceinline constexpr size_t latency() noexcept
         {
             return _shared_data.latency;
         }
 
-        constexpr size_t buffer_size() noexcept
+        __forceinline constexpr size_t buffer_size() noexcept
         {
             return _shared_data.buffer.size();
         }
@@ -227,20 +225,20 @@ namespace iv {
             }
         }
 
-        constexpr Sample get(size_t offset = 0) const noexcept
+        __forceinline constexpr Sample get(size_t offset = 0) const noexcept
         {
             if (offset > _shared_data.latency) return 0.0;
             size_t idx = (_shared_data.position + offset) & (_shared_data.buffer.size() - 1);
             return _shared_data.buffer[idx];
         }
 
-        constexpr void push(Sample value) noexcept
+        __forceinline constexpr void push(Sample value) noexcept
         {
             _shared_data.position = (_shared_data.position + 1) & (_shared_data.buffer.size() - 1);
-            _shared_data.buffer[_shared_data.position] = value;
+            update(value);
         }
 
-        constexpr void update(Sample value, size_t offset = 0) noexcept
+        __forceinline constexpr void update(Sample value, size_t offset = 0) noexcept
         {
             if (offset > _shared_data.latency) return;
             size_t idx = (_shared_data.position + _shared_data.latency - offset) & (_shared_data.buffer.size() - 1);
@@ -525,14 +523,15 @@ namespace iv {
             out.push(sample_warped_aa);
         }
     };
-    
+
     class Integrator {
-        double const* _sample_rate;
+        double const* _update_frequency;
 
     public:
-        constexpr explicit Integrator(double const* sample_rate) noexcept :
-            _sample_rate(sample_rate)
-        {}
+        constexpr explicit Integrator(double const* update_frequency) noexcept :
+            _update_frequency(update_frequency)
+        {
+        }
 
         constexpr auto inputs() const noexcept
         {
@@ -548,8 +547,8 @@ namespace iv {
         {
             auto const& f_prev = state.inputs[0].get();
             auto const& f = state.inputs[1].get();
-            auto const& inv_dx = *_sample_rate;
-            state.outputs[0].push(f_prev + f / inv_dx);
+            auto const& dx = *_update_frequency;
+            state.outputs[0].push(f_prev + f * dx);
         }
     };
 
@@ -584,7 +583,8 @@ namespace iv {
             _min(min),
             _max(max),
             _seed(seed)
-        {}
+        {
+        }
 
         constexpr auto outputs() const noexcept
         {
@@ -610,7 +610,8 @@ namespace iv {
 
         constexpr explicit AlignedStorage() :
             uninitialized_object{}
-        {}
+        {
+        }
     };
 
     struct PortId {
@@ -639,7 +640,7 @@ struct std::hash<iv::PortId>
     std::hash<size_t> size_t_hash;
     std::size_t operator()(const iv::PortId& p) const noexcept
     {
-        return size_t_hash(p.node) ^ (~size_t_hash(p.port)-1);
+        return size_t_hash(p.node) ^ (~size_t_hash(p.port) - 1);
     }
 };
 
@@ -649,7 +650,7 @@ struct std::hash<iv::GraphEdge>
     std::hash<iv::PortId> port_id_hash;
     std::size_t operator()(const iv::GraphEdge& e) const noexcept
     {
-        return port_id_hash(e.source) ^ (~port_id_hash(e.target)-1);
+        return port_id_hash(e.source) ^ (~port_id_hash(e.target) - 1);
     }
 };
 
@@ -743,7 +744,8 @@ namespace iv
     public:
         explicit CountingNonAllocator(std::byte* memory_hint) :
             _memory_hint(memory_hint)
-        {}
+        {
+        }
 
         constexpr bool can_allocate() const noexcept
         {
@@ -796,7 +798,8 @@ namespace iv
 
         template<typename T, typename... Args>
         void construct_at(T*, Args&&...) const
-        {}
+        {
+        }
 
         template<typename T, typename U>
         constexpr T& assign(T&, U&&) const
@@ -821,7 +824,8 @@ namespace iv
 
         template<typename R, typename T>
         void fill_n(R&, T&&) const
-        {}
+        {
+        }
     };
 
     struct TypeErasedAllocator
@@ -892,7 +896,7 @@ namespace iv
         std::vector<InputConfig> _inputs;
         std::vector<OutputConfig> _outputs;
         size_t _internal_latency;
-        std::span<std::byte> (*_init_buffer_fn)(void*, TypeErasedAllocator) noexcept;
+        std::span<std::byte>(*_init_buffer_fn)(void*, TypeErasedAllocator) noexcept;
         void (*_tick_fn)(void*, TickState const&) noexcept;
 
     public:
@@ -936,7 +940,7 @@ namespace iv
         template<typename Allocator>
         constexpr std::span<std::byte> init_buffer(Allocator& allocator) const noexcept
         {
-            return _init_buffer_fn(_node.get(), TypeErasedAllocator{allocator});
+            return _init_buffer_fn(_node.get(), TypeErasedAllocator{ allocator });
         }
 
         void tick(TickState const& state) noexcept
@@ -1045,108 +1049,8 @@ namespace iv
             std::unordered_map<GraphEdge, size_t> corrected_latencies;
             std::unordered_map<PortId, std::span<Sample>> input_ports_samples;
             std::unordered_map<size_t, std::span<SharedPortData>> node_port_data;
-            
+
             auto allocate_node_state = [&](auto const& node, size_t node_i)
-            {
-                NodeState& node_state = (node_i == GRAPH_ID)
-                    ? graph_state
-                    : allocator.at(graph_state.node_states, node_i);
-
-                std::span<InputConfig const> input_configs;
-                std::span<OutputConfig const> output_configs;
-                if (node_i == GRAPH_ID)
-                {
-                    // private inputs
-                    input_configs = private_input_configs;
-                    // no outputs, public are handled by parent node and private are handled by the children nodes connected to them
-                }
-                else
-                {
-                    input_configs = get_inputs(node);
-                    output_configs = get_outputs(node);
-                }
-                size_t const num_inputs = input_configs.size();
-                size_t const num_outputs = output_configs.size();
-                node_port_data[node_i] = allocator.allocate_array<SharedPortData>(num_inputs);
-                if (node_i != GRAPH_ID) allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(num_outputs));
-                allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(num_inputs));
-
-                // align latencies
-                size_t node_global_latency = 0;
-                std::vector<size_t> input_port_extra_latencies(num_inputs);
-                for (size_t in_port = 0; in_port < num_inputs; ++in_port)
-                {
-                    node_global_latency = std::max(node_global_latency, input_port_global_latencies[{ node_i, in_port }]);
-                }
-                for (size_t in_port = 0; in_port < num_inputs; ++in_port)
-                {
-                    input_port_extra_latencies[in_port] += node_global_latency - input_port_global_latencies[{ node_i, in_port }];
-                }
-                if (node_i != GRAPH_ID) {
-                    node_global_latency += get_internal_latency(node);
-                    for (size_t out_port = 0; out_port < num_outputs; ++out_port)
-                    {
-                        size_t output_latency = node_global_latency + output_configs[out_port].latency;
-                        PortId connection = target_of[{ node_i, out_port }];
-                        input_port_global_latencies[connection] = output_latency;
-                    }
-                }
-
-                for (size_t input_i = 0; input_i < num_inputs; ++input_i)
-                {
-                    PortId this_input { node_i, input_i };
-                    InputConfig const& input_config = input_configs[input_i];
-                    size_t num_port_samples;
-
-                    if (auto it = source_of.find(this_input); it != source_of.end())
-                    {
-                        // input is connected to output, let's setup both
-                        size_t output_node_i = it->second.node;
-                        size_t output_port_i = it->second.port;
-                        GraphEdge this_edge { it->second, this_input };
-
-                        OutputConfig const& output_config = (output_node_i == GRAPH_ID)
-                            ? private_outputs_config
-                            : get_outputs(_nodes[output_node_i])[output_port_i];
-
-                        size_t const corrected_latency = output_config.latency + input_port_extra_latencies[input_i];
-                        corrected_latencies.insert({ this_edge, corrected_latency });
-                        num_port_samples = calculate_port_buffer_size(corrected_latency, input_config.history);
-                    }
-                    else
-                    {
-                        // input is disconnected, no corresponding output port
-                        num_port_samples = calculate_port_buffer_size(0, input_config.history);
-                    }
-
-                    input_ports_samples.insert({ this_input, allocator.allocate_array<Sample>(num_port_samples) });
-                }
-
-                if (node_i != GRAPH_ID)
-                {
-                    CountingNonAllocator counter(allocator.get_buffer().data());
-                    do_init_buffer(node, counter);
-                    allocator.assign(node_state.buffer, allocator.allocate_array<std::byte>(counter.estimate_buffer_size()));
-                }
-            };
-
-            for (size_t node_i = 0; node_i < num_nodes + 1; ++node_i)
-            {
-                if (node_i < num_nodes)
-                {
-                    allocate_node_state(_nodes[node_i], node_i);
-                }
-                else if (node_i == num_nodes)
-                {
-                    allocate_node_state(*this, GRAPH_ID);
-                }
-            }
-
-            if (allocator.can_allocate())
-            {
-                // memory was allocated, now let's initialize it
-
-                auto initialize_node_state = [&](auto const& node, size_t node_i)
                 {
                     NodeState& node_state = (node_i == GRAPH_ID)
                         ? graph_state
@@ -1167,51 +1071,151 @@ namespace iv
                     }
                     size_t const num_inputs = input_configs.size();
                     size_t const num_outputs = output_configs.size();
-                    std::span<SharedPortData> inputs_port_data = node_port_data[node_i];
+                    node_port_data[node_i] = allocator.allocate_array<SharedPortData>(num_inputs);
+                    if (node_i != GRAPH_ID) allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(num_outputs));
+                    allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(num_inputs));
+
+                    // align latencies
+                    size_t node_global_latency = 0;
+                    std::vector<size_t> input_port_extra_latencies(num_inputs);
+                    for (size_t in_port = 0; in_port < num_inputs; ++in_port)
+                    {
+                        node_global_latency = std::max(node_global_latency, input_port_global_latencies[{ node_i, in_port }]);
+                    }
+                    for (size_t in_port = 0; in_port < num_inputs; ++in_port)
+                    {
+                        input_port_extra_latencies[in_port] += node_global_latency - input_port_global_latencies[{ node_i, in_port }];
+                    }
+                    if (node_i != GRAPH_ID) {
+                        node_global_latency += get_internal_latency(node);
+                        for (size_t out_port = 0; out_port < num_outputs; ++out_port)
+                        {
+                            size_t output_latency = node_global_latency + output_configs[out_port].latency;
+                            PortId connection = target_of[{ node_i, out_port }];
+                            input_port_global_latencies[connection] = output_latency;
+                        }
+                    }
 
                     for (size_t input_i = 0; input_i < num_inputs; ++input_i)
                     {
-                        PortId this_input { node_i, input_i };
+                        PortId this_input{ node_i, input_i };
                         InputConfig const& input_config = input_configs[input_i];
-                        InputPort& input_port = allocator.at(node_state.inputs, input_i);
-                        SharedPortData& input_port_data = allocator.at(inputs_port_data, input_i);
-                        std::span<Sample> port_samples = input_ports_samples.at(this_input);
+                        size_t num_port_samples;
 
-                        if (input_config.default_value)
-                        {
-                            allocator.fill_n(port_samples, input_config.default_value);
-                        }
-
-                        if (auto it = source_of.find({ node_i, input_i }); it != source_of.end())
+                        if (auto it = source_of.find(this_input); it != source_of.end())
                         {
                             // input is connected to output, let's setup both
                             size_t output_node_i = it->second.node;
                             size_t output_port_i = it->second.port;
-                            GraphEdge this_edge { it->second, this_input };
+                            GraphEdge this_edge{ it->second, this_input };
 
-                            OutputPort& output_port = (output_node_i == GRAPH_ID)
-                                ? allocator.at(graph_state.outputs, output_port_i)
-                                : allocator.at(allocator.at(graph_state.node_states, output_node_i).outputs, output_port_i);
+                            OutputConfig const& output_config = (output_node_i == GRAPH_ID)
+                                ? private_outputs_config
+                                : get_outputs(_nodes[output_node_i])[output_port_i];
 
-                            size_t const corrected_latency = corrected_latencies[this_edge];
-                            allocator.construct_at(&input_port_data, port_samples, corrected_latency);
-                            allocator.construct_at(&output_port, input_port_data);
+                            size_t const corrected_latency = output_config.latency + input_port_extra_latencies[input_i];
+                            corrected_latencies.insert({ this_edge, corrected_latency });
+                            num_port_samples = calculate_port_buffer_size(corrected_latency, input_config.history);
                         }
                         else
                         {
-                            // input is disconnected: init dummy buffer
-                            allocator.construct_at(&input_port_data, port_samples, 0);
+                            // input is disconnected, no corresponding output port
+                            num_port_samples = calculate_port_buffer_size(0, input_config.history);
                         }
-                        allocator.construct_at(&input_port, input_port_data, input_config.history);
+
+                        input_ports_samples.insert({ this_input, allocator.allocate_array<Sample>(num_port_samples) });
                     }
 
                     if (node_i != GRAPH_ID)
                     {
-                        FixedBufferAllocator nested_allocator(node_state.buffer);
-                        std::span<std::byte> result = do_init_buffer(node, nested_allocator);
-                        assert(result.data() == node_state.buffer.data() && result.size() == node_state.buffer.size());
+                        CountingNonAllocator counter(allocator.get_buffer().data());
+                        do_init_buffer(node, counter);
+                        allocator.assign(node_state.buffer, allocator.allocate_array<std::byte>(counter.estimate_buffer_size()));
                     }
                 };
+
+            for (size_t node_i = 0; node_i < num_nodes + 1; ++node_i)
+            {
+                if (node_i < num_nodes)
+                {
+                    allocate_node_state(_nodes[node_i], node_i);
+                }
+                else if (node_i == num_nodes)
+                {
+                    allocate_node_state(*this, GRAPH_ID);
+                }
+            }
+
+            if (allocator.can_allocate())
+            {
+                // memory was allocated, now let's initialize it
+
+                auto initialize_node_state = [&](auto const& node, size_t node_i)
+                    {
+                        NodeState& node_state = (node_i == GRAPH_ID)
+                            ? graph_state
+                            : allocator.at(graph_state.node_states, node_i);
+
+                        std::span<InputConfig const> input_configs;
+                        std::span<OutputConfig const> output_configs;
+                        if (node_i == GRAPH_ID)
+                        {
+                            // private inputs
+                            input_configs = private_input_configs;
+                            // no outputs, public are handled by parent node and private are handled by the children nodes connected to them
+                        }
+                        else
+                        {
+                            input_configs = get_inputs(node);
+                            output_configs = get_outputs(node);
+                        }
+                        size_t const num_inputs = input_configs.size();
+                        size_t const num_outputs = output_configs.size();
+                        std::span<SharedPortData> inputs_port_data = node_port_data[node_i];
+
+                        for (size_t input_i = 0; input_i < num_inputs; ++input_i)
+                        {
+                            PortId this_input{ node_i, input_i };
+                            InputConfig const& input_config = input_configs[input_i];
+                            InputPort& input_port = allocator.at(node_state.inputs, input_i);
+                            SharedPortData& input_port_data = allocator.at(inputs_port_data, input_i);
+                            std::span<Sample> port_samples = input_ports_samples.at(this_input);
+
+                            if (input_config.default_value)
+                            {
+                                allocator.fill_n(port_samples, input_config.default_value);
+                            }
+
+                            if (auto it = source_of.find({ node_i, input_i }); it != source_of.end())
+                            {
+                                // input is connected to output, let's setup both
+                                size_t output_node_i = it->second.node;
+                                size_t output_port_i = it->second.port;
+                                GraphEdge this_edge{ it->second, this_input };
+
+                                OutputPort& output_port = (output_node_i == GRAPH_ID)
+                                    ? allocator.at(graph_state.outputs, output_port_i)
+                                    : allocator.at(allocator.at(graph_state.node_states, output_node_i).outputs, output_port_i);
+
+                                size_t const corrected_latency = corrected_latencies[this_edge];
+                                allocator.construct_at(&input_port_data, port_samples, corrected_latency);
+                                allocator.construct_at(&output_port, input_port_data);
+                            }
+                            else
+                            {
+                                // input is disconnected: init dummy buffer
+                                allocator.construct_at(&input_port_data, port_samples, 0);
+                            }
+                            allocator.construct_at(&input_port, input_port_data, input_config.history);
+                        }
+
+                        if (node_i != GRAPH_ID)
+                        {
+                            FixedBufferAllocator nested_allocator(node_state.buffer);
+                            std::span<std::byte> result = do_init_buffer(node, nested_allocator);
+                            assert(result.data() == node_state.buffer.data() && result.size() == node_state.buffer.size());
+                        }
+                    };
 
                 for (size_t node_i = 0; node_i < num_nodes + 1; ++node_i)
                 {
@@ -1239,7 +1243,7 @@ namespace iv
                 _nodes[i].tick({
                     private_state.node_states[i],
                     state.midi,
-                });
+                    });
             }
             for (size_t i = 0; i < _num_public_outputs; ++i) {
                 state.outputs[i].push(private_state.inputs[i].get());
@@ -1265,29 +1269,29 @@ namespace iv
             size_t max_latency = 0;
 
             auto process_node = [&](auto& node, size_t node_i)
-            {
-                size_t node_global_latency = 0;
-
-                size_t const num_inputs = (node_i != GRAPH_ID) ? get_num_inputs(node) : _num_public_outputs;
-                for (size_t input_port = 0; input_port < num_inputs; ++input_port)
                 {
-                    node_global_latency = std::max(node_global_latency, input_global_latencies[{ node_i, input_port }]);
-                }
+                    size_t node_global_latency = 0;
 
-                if (node_i == GRAPH_ID) return;
-
-                node_global_latency += get_internal_latency(node);
-                size_t const num_outputs = get_num_outputs(node);
-                for (size_t output_port = 0; output_port < num_outputs; ++output_port)
-                {
-                    if (auto it = target_of.find({ node_i, output_port }); it != target_of.end())
+                    size_t const num_inputs = (node_i != GRAPH_ID) ? get_num_inputs(node) : _num_public_outputs;
+                    for (size_t input_port = 0; input_port < num_inputs; ++input_port)
                     {
-                        size_t new_latency = node_global_latency + get_outputs(node)[output_port].latency;
-                        max_latency = std::max(max_latency, new_latency);
-                        input_global_latencies[it->second] = new_latency;
+                        node_global_latency = std::max(node_global_latency, input_global_latencies[{ node_i, input_port }]);
                     }
-                }
-            };
+
+                    if (node_i == GRAPH_ID) return;
+
+                    node_global_latency += get_internal_latency(node);
+                    size_t const num_outputs = get_num_outputs(node);
+                    for (size_t output_port = 0; output_port < num_outputs; ++output_port)
+                    {
+                        if (auto it = target_of.find({ node_i, output_port }); it != target_of.end())
+                        {
+                            size_t new_latency = node_global_latency + get_outputs(node)[output_port].latency;
+                            max_latency = std::max(max_latency, new_latency);
+                            input_global_latencies[it->second] = new_latency;
+                        }
+                    }
+                };
 
             for (size_t node_i = 0; node_i < _nodes.size() + 1; ++node_i) {
                 if (node_i < _nodes.size())
@@ -1325,14 +1329,14 @@ namespace iv
 
                     _nodes.emplace_back(SumNode(port_arity));
                     size_t const sum_node = _nodes.size() - 1;
-                    
+
                     for (size_t out_port = 0; out_port < edges_to_expand.size(); ++out_port)
                     {
                         GraphEdge const& to_rewire = edges_to_expand[out_port];
                         _edges.erase(to_rewire);
-                        _edges.insert(GraphEdge { to_rewire.source, { sum_node, out_port } });
+                        _edges.insert(GraphEdge{ to_rewire.source, { sum_node, out_port } });
                     }
-                    _edges.insert(GraphEdge { { sum_node, 0 }, { node, in_port } });
+                    _edges.insert(GraphEdge{ { sum_node, 0 }, { node, in_port } });
                 }
             }
 
@@ -1361,9 +1365,9 @@ namespace iv
                     {
                         GraphEdge const& to_rewire = edges_to_expand[in_port];
                         _edges.erase(to_rewire);
-                        _edges.insert(GraphEdge { { broadcast_node, in_port }, to_rewire.target });
+                        _edges.insert(GraphEdge{ { broadcast_node, in_port }, to_rewire.target });
                     }
-                    _edges.insert(GraphEdge { { node, out_port }, { broadcast_node, 0 } });
+                    _edges.insert(GraphEdge{ { node, out_port }, { broadcast_node, 0 } });
                 }
             }
         }
@@ -1381,35 +1385,35 @@ namespace iv
             }
 
             auto make_heads_queue = [&]()
-            {
-                std::deque<size_t> queue;
-
-                // include all nodes with 0 connected input port
-                for (size_t i = 0; i < n; ++i)
                 {
-                    bool all_inputs_disconnected = true;
-                    size_t const num_inputs = get_num_inputs(_nodes[i]);
-                    for (size_t in_i = 0; in_i < num_inputs; ++in_i)
+                    std::deque<size_t> queue;
+
+                    // include all nodes with 0 connected input port
+                    for (size_t i = 0; i < n; ++i)
                     {
-                        if (reverse_edges_map.contains({i, in_i}))
+                        bool all_inputs_disconnected = true;
+                        size_t const num_inputs = get_num_inputs(_nodes[i]);
+                        for (size_t in_i = 0; in_i < num_inputs; ++in_i)
                         {
-                            all_inputs_disconnected = false;
-                            break;
+                            if (reverse_edges_map.contains({ i, in_i }))
+                            {
+                                all_inputs_disconnected = false;
+                                break;
+                            }
+                        }
+                        if (!all_inputs_disconnected) continue;
+                        queue.push_back(i);
+                    }
+                    // include all nodes directly connected to the source ports of the graph
+                    for (size_t private_out_i = 0; private_out_i < _num_public_inputs; ++private_out_i)
+                    {
+                        if (auto it = edges_map.find({ GRAPH_ID, private_out_i }); it != edges_map.end())
+                        {
+                            queue.push_back(it->second.node);
                         }
                     }
-                    if (!all_inputs_disconnected) continue;
-                    queue.push_back(i);
-                }
-                // include all nodes directly connected to the source ports of the graph
-                for (size_t private_out_i = 0; private_out_i < _num_public_inputs; ++private_out_i)
-                {
-                    if (auto it = edges_map.find({ GRAPH_ID, private_out_i }); it != edges_map.end())
-                    {
-                        queue.push_back(it->second.node);
-                    }
-                }
-                return queue;
-            };
+                    return queue;
+                };
 
             // traverse the graph for each node to find their respective cyclic parents
             std::unordered_map<size_t, std::unordered_set<size_t>> cyclic_parents_of(n);
@@ -1519,7 +1523,7 @@ namespace iv
             std::stable_sort(
                 reverse_sorted.begin(), reverse_sorted.end(),
                 [&](int i1, int i2) {return sorted[i1] < sorted[i2]; });
-            
+
             Edges sorted_edges;
             sorted_edges.reserve(_edges.size());
             for (GraphEdge edge : _edges)
@@ -1655,8 +1659,8 @@ namespace iv
         static constexpr size_t const MIN_GRAPH_OUTPUTS = 1;
 
         struct MidiNoteState : public NodeState {
-            size_t ttl{0};
-            size_t amplitude{0};
+            size_t ttl{ 0 };
+            size_t amplitude{ 0 };
         };
 
         struct MidiState : public NodeState {
@@ -1727,7 +1731,7 @@ namespace iv
                 note_state.inputs[1].push(Sample(NOTE_NUMBER_TO_FREQUENCY[note_number]));
                 for (size_t extra_i = 0; extra_i < midi_state.inputs.size() - MIN_GRAPH_INPUTS; ++extra_i)
                 {
-                    note_state.inputs[extra_i+MIN_GRAPH_INPUTS].push(state.inputs[extra_i+MIN_INPUTS].get());
+                    note_state.inputs[extra_i + MIN_GRAPH_INPUTS].push(state.inputs[extra_i + MIN_INPUTS].get());
                 }
                 _graph_node.tick({ note_state, state.midi });
                 result += note_state.outputs[0].get();
@@ -1839,7 +1843,7 @@ namespace iv
             FixedBufferAllocator allocator({
                 reinterpret_cast<std::byte*>(_buffer.data()),
                 _buffer.size() * sizeof(AlignedBytes)
-            });
+                });
             auto allocated = do_init_buffer(_node, allocator);
             assert(
                 _buffer.size() - allocated.size() < alignof(max_align_t) &&
@@ -1860,11 +1864,11 @@ namespace iv
 
         void tick(std::span<MidiMessage const> midi) noexcept
         {
-            std::span<std::byte> buffer_span {
+            std::span<std::byte> buffer_span{
                 reinterpret_cast<std::byte*>(_buffer.data()),
                 _buffer.size() * sizeof(AlignedBytes)
             };
-            _node.tick({ NodeState { .buffer = buffer_span }, midi });
+            _node.tick({ NodeState {.buffer = buffer_span }, midi });
         }
     };
 }

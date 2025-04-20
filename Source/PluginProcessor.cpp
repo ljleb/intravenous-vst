@@ -1,6 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "NodeGraph.h"
+#include "../Intravenous_NodeGraph/NodeGraph.h"
 
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_ID = "warp_threshold";
 juce::String const IntravenousAudioProcessor::NOISE_LEVEL_ID = "noise_level";
@@ -131,7 +131,7 @@ iv::GraphNode IntravenousAudioProcessor::init_graph() {
             size_t voice_warp_threshold_port = 2;
             size_t voice_noise_generator_port = 3;
 
-            auto integrator = emplace_back_id(nodes, iv::Integrator(&_sample_rate));
+            auto integrator = emplace_back_id(nodes, iv::Integrator(&_update_frequency));
             auto warper = emplace_back_id(nodes, iv::WarperNode());
 
             auto frequency = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
@@ -231,7 +231,7 @@ void IntravenousAudioProcessor::changeProgramName(int index, const juce::String&
 }
 
 void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_per_block) {
-    _sample_rate = sample_rate;
+    _update_frequency = 1.0 / sample_rate;
     _midi_buffers.resize(samples_per_block);
     _midi_buffer_sizes.resize(samples_per_block, 0);
     _midi_buffers.shrink_to_fit();

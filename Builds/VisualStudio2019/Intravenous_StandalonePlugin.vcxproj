@@ -120,6 +120,7 @@
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <LanguageStandard>stdcpplatest</LanguageStandard>
+      <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>
     <ResourceCompile>
       <AdditionalIncludeDirectories>D:\Program Files\JUCE\modules\juce_audio_processors\format_types\VST3_SDK;..\..\JuceLibraryCode;D:\Program Files\JUCE\modules;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
