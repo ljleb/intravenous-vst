@@ -1,6 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
-#include "NodeGraph.h"
+#include "../Intravenous_NodeGraph/NodeGraph.h"
 
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
     juce::AudioProcessorValueTreeState _value_tree_state;
@@ -9,7 +9,6 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::atomic<float>* _noise_level;
     std::atomic<float>* _iir_outw0;
 
-    iv::NodeProcessor _node_processor;
     iv::Sample* _channels[2];
     std::vector<std::array<iv::MidiMessage, 128>> _midi_buffers;
     std::vector<uint8_t> _midi_buffer_sizes;

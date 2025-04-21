@@ -116,12 +116,12 @@
     <ClCompile Include="test.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Builds\VisualStudio2019\Intravenous_SharedCode.vcxproj">
-      <Project>{40491490-c7f9-c2e5-b99b-8f878be609f5}</Project>
-    </ProjectReference>
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
+    <ProjectReference Include="..\Intravenous_NodeGraph\Intravenous_NodeGraph.vcxproj">
+      <Project>{4e178b5d-e73a-4d36-a856-2d556ddeca94}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
