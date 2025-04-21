@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
-#include "../Intravenous_NodeGraph/NodeGraph.h"
+#include "../Intravenous_NodeGraph/public.h"
+
 
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
     juce::AudioProcessorValueTreeState _value_tree_state;
@@ -33,9 +34,6 @@ public:
 
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
-
-private:
-    iv::GraphNode init_graph();
 
 public:
     juce::AudioProcessorEditor* createEditor() override;

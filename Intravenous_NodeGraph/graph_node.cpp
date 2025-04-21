@@ -1,5 +1,7 @@
 ﻿#include "pch.h"
-#include "NodeGraph.h"
+#include "public.h"
+#include "midi_node.h"
+#include "graph_node.h"
 #include <any>
 
 
@@ -69,22 +71,36 @@ public:
 };
 
 struct SimpleIirLowPass {
+    double const* _update_frequency;
+
+public:
+    constexpr explicit SimpleIirLowPass(double const* update_frequency) noexcept :
+        _update_frequency(update_frequency)
+    {}
+
     constexpr auto inputs() const noexcept
     {
-        return std::array<iv::InputConfig, 2>{};
+        return std::array<iv::InputConfig, 3>{};
     }
 
     constexpr auto outputs() const noexcept
     {
-        return std::array<iv::OutputConfig, 1>{};
+        return std::array<iv::OutputConfig, 2>{};
     }
 
-    void tick(iv::TickState const& state) noexcept {
-        iv::Sample in_sample = state.inputs[0].get();
-        iv::Sample in_alpha = state.inputs[1].get();
-        auto& out = state.outputs[0];
-        iv::Sample last_out = out.get();
-        out.push(last_out + in_alpha * (in_sample - last_out));
+    void tick(iv::TickState const& state) const noexcept {
+        iv::Sample in_dry = state.inputs[0].get();
+        iv::Sample in_control = 1 - state.inputs[1].get();
+        iv::Sample dx = *_update_frequency;
+        iv::Sample alpha = 1 - std::exp(-2 * std::_Pi_val * in_control);
+
+        auto& out_low = state.outputs[0];
+        auto& out_high = state.outputs[1];
+        iv::Sample last_low = out_low.get();
+
+        iv::Sample low = last_low + alpha * (in_dry - last_low);
+        out_low.push(low);
+        out_high.push(in_dry - low);
     }
 };
 
@@ -107,13 +123,15 @@ size_t iv::init_graph(
             auto filter_knob = emplace_back_id(nodes, KnobNode<float>(noise_filter));
             auto generator = emplace_back_id(nodes, iv::UniformNoiseNode());
             auto product = emplace_back_id(nodes, iv::ProductNode());
-            auto filter = emplace_back_id(nodes, SimpleIirLowPass());
+            auto filter = emplace_back_id(nodes, SimpleIirLowPass(update_frequency));
 
-            edges.insert(iv::GraphEdge{ { generator,   0 }, { filter,  0 } });
-            edges.insert(iv::GraphEdge{ { filter_knob, 0 }, { filter,  1 } });
-            edges.insert(iv::GraphEdge{ { filter,      0 }, { product, 0 } });
-            edges.insert(iv::GraphEdge{ { level_knob,  0 }, { product, 1 } });
-            edges.insert(iv::GraphEdge{ { product,     0 }, { graph,   0 } });
+            edges.insert(iv::GraphEdge { { generator,   0 }, { filter,  0 } });
+            edges.insert(iv::GraphEdge { { filter_knob, 0 }, { filter,  1 } });
+            edges.insert(iv::GraphEdge { { filter,      1 }, { product, 0 } });
+            edges.insert(iv::GraphEdge { { level_knob,  0 }, { product, 1 } });
+            edges.insert(iv::GraphEdge { { product,     0 }, { graph,   0 } });
+
+            edges.insert(iv::GraphEdge { { filter,      0 }, { filter,  2 } });
 
             return std::make_tuple(0, 1);
         });
@@ -133,29 +151,29 @@ size_t iv::init_graph(
                 auto product = emplace_back_id(nodes, iv::ProductNode());
                 auto constant = emplace_back_id(nodes, iv::ConstantNode(4.0));
 
-                edges.insert(iv::GraphEdge{ { graph,    0 }, { product, 0 } });
-                edges.insert(iv::GraphEdge{ { constant, 0 }, { product, 1 } });
-                edges.insert(iv::GraphEdge{ { product,  0 }, { graph,   0 } });
+                edges.insert(iv::GraphEdge { { graph,    0 }, { product, 0 } });
+                edges.insert(iv::GraphEdge { { constant, 0 }, { product, 1 } });
+                edges.insert(iv::GraphEdge { { product,  0 }, { graph,   0 } });
 
                 return std::make_tuple(1, 1);
             });
 
-            edges.insert(iv::GraphEdge{ { graph, frequency_port }, { frequency, 0 } });
+            edges.insert(iv::GraphEdge { { graph, frequency_port }, { frequency, 0 } });
 
             // main loop
-            edges.insert(iv::GraphEdge{ { integrator, 0 }, { warper,     0 } });
-            edges.insert(iv::GraphEdge{ { warper,     1 }, { integrator, 0 } });
+            edges.insert(iv::GraphEdge { { integrator, 0 }, { warper,     0 } });
+            edges.insert(iv::GraphEdge { { warper,     1 }, { integrator, 0 } });
 
             // knobs
-            edges.insert(iv::GraphEdge{ { frequency, 0 },                          { integrator, 1 } });
-            edges.insert(iv::GraphEdge{ { graph,     voice_warp_threshold_port },  { warper,     1 } });
-            edges.insert(iv::GraphEdge{ { graph,     voice_noise_generator_port }, { warper,     0 } });
+            edges.insert(iv::GraphEdge { { frequency, 0 },                          { integrator, 1 } });
+            edges.insert(iv::GraphEdge { { graph,     voice_warp_threshold_port },  { warper,     1 } });
+            edges.insert(iv::GraphEdge { { graph,     voice_noise_generator_port }, { warper,     0 } });
 
             // out
             auto amplitude = emplace_back_id(nodes, iv::ProductNode());
-            edges.insert(iv::GraphEdge{ { graph,     amplitude_port }, { amplitude, 0 } });
-            edges.insert(iv::GraphEdge{ { warper,    0 },              { amplitude, 1 } });
-            edges.insert(iv::GraphEdge{ { amplitude, 0 },              { graph,     0 } });
+            edges.insert(iv::GraphEdge { { graph,     amplitude_port }, { amplitude, 0 } });
+            edges.insert(iv::GraphEdge { { warper,    0 },              { amplitude, 1 } });
+            edges.insert(iv::GraphEdge { { amplitude, 0 },              { graph,     0 } });
 
             return std::make_tuple(4, 1);
         });
@@ -167,14 +185,14 @@ size_t iv::init_graph(
         auto right_out = emplace_back_id(nodes, AudioStreamNode(channels[1]));
 
         // shared inputs
-        edges.insert(iv::GraphEdge{ { warp_threshold_knob, 0 }, { midi_left, 0 } });
-        edges.insert(iv::GraphEdge{ { noise, 0 }, { midi_left, 1 } });
+        edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_left, 0 } });
+        edges.insert(iv::GraphEdge { { noise,               0 }, { midi_left, 1 } });
 
-        edges.insert(iv::GraphEdge{ { warp_threshold_knob, 0 }, { midi_right, 0 } });
-        edges.insert(iv::GraphEdge{ { noise, 0 }, { midi_right, 1 } });
+        edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_right, 0 } });
+        edges.insert(iv::GraphEdge { { noise,               0 }, { midi_right, 1 } });
 
-        edges.insert(iv::GraphEdge{ { midi_left, 0 }, { left_out, 0 } });
-        edges.insert(iv::GraphEdge{ { midi_right, 0 }, { right_out, 0 } });
+        edges.insert(iv::GraphEdge { { midi_left,  0 }, { left_out,  0 } });
+        edges.insert(iv::GraphEdge { { midi_right, 0 }, { right_out, 0 } });
 
         return std::make_tuple(0, 0);
     });

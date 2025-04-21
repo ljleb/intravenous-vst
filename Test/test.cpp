@@ -1,5 +1,5 @@
 #include "pch.h"
-#include "../Intravenous_NodeGraph/NodeGraph.h"
+#include "../Intravenous_NodeGraph/graph_node.h"
 
 
 //TEST(TestCaseName, TestName) {

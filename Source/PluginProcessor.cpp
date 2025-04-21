@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "../Intravenous_NodeGraph/NodeGraph.h"
+#include "../Intravenous_NodeGraph/public.h"
+
 
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_ID = "warp_threshold";
 juce::String const IntravenousAudioProcessor::NOISE_LEVEL_ID = "noise_level";
@@ -90,9 +91,11 @@ void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_pe
     _midi_buffers.resize(samples_per_block);
     _midi_buffer_sizes.resize(samples_per_block, 0);
     _midi_buffers.shrink_to_fit();
+    setLatencySamples(iv::init_graph(&_update_frequency, _channels, _warp_threshold, _noise_level, _iir_outw0));
 }
 
 void IntravenousAudioProcessor::releaseResources() {
+    iv::free_graph();
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
