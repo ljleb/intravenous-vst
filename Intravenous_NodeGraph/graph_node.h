@@ -505,7 +505,7 @@ namespace iv {
             }
         }
 
-        std::deque<size_t> make_source_nodes_queue(
+        std::deque<size_t> find_source_nodes(
             std::unordered_map<PortId, PortId> const& source_of,
             std::unordered_map<PortId, PortId> const& target_of) const
         {
@@ -554,8 +554,7 @@ namespace iv {
         std::unordered_multimap<size_t, size_t> compute_cyclic_parents(
             std::deque<size_t> source_nodes,
             std::unordered_map<PortId, PortId> const& source_of,
-            std::unordered_map<PortId, PortId> const& target_of
-        ) const
+            std::unordered_map<PortId, PortId> const& target_of) const
         {
             std::unordered_multimap<size_t, size_t> cyclic_parents_of;
 
@@ -602,16 +601,16 @@ namespace iv {
             const size_t num_nodes = _nodes.size();
             auto const [source_of, target_of] = make_source_target_edge_maps();
 
-            std::deque<size_t> const source_nodes = make_source_nodes_queue(source_of, target_of);
+            auto const source_nodes = find_source_nodes(source_of, target_of);
             auto const cyclic_parents_of = compute_cyclic_parents(source_nodes, source_of, target_of);
             
             std::vector<bool> placed(num_nodes, false);
             std::vector<size_t> sorted;
             sorted.reserve(num_nodes);
 
-            for_each_node_togological<false>(source_nodes, [&](auto& node)
+            for_each_node_togological<false>(source_nodes, [&](auto& node) -> std::vector<size_t>
             {
-                if (placed[node]) return std::vector<size_t> {};
+                if (placed[node]) return {};
 
                 size_t const num_inputs = get_num_inputs(_nodes[node]);
                 for (size_t input_port = 0; input_port < num_inputs; ++input_port) {
@@ -625,7 +624,7 @@ namespace iv {
 
                         // the parent node connected to this input has not been placed yet
                         // so we come back to this node later
-                        return std::vector<size_t> { node };
+                        return { node };
                     }
                 }
 
