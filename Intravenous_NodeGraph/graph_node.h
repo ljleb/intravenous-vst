@@ -376,7 +376,8 @@ namespace iv {
                 _nodes[i].tick({
                     private_state.node_states[i],
                     state.midi,
-                    });
+                    state.index
+                });
             }
             for (size_t i = 0; i < _num_public_outputs; ++i) {
                 state.outputs[i].push(private_state.inputs[i].get());
@@ -673,7 +674,7 @@ namespace iv {
 
             std::vector<size_t> reverse_sorted(num_nodes);
             std::ranges::iota(reverse_sorted, 0);
-            std::ranges::stable_sort(reverse_sorted, [&](int i1, int i2) {return sorted[i1] < sorted[i2]; });
+            std::ranges::stable_sort(reverse_sorted, [&](size_t i1, size_t i2) { return sorted[i1] < sorted[i2]; });
 
             Edges sorted_edges;
             sorted_edges.reserve(_edges.size());
@@ -750,13 +751,13 @@ namespace iv {
             initialize_graph();
         }
 
-        void tick(std::span<MidiMessage const> midi) noexcept
+        void tick(std::span<MidiMessage const> midi, size_t index) noexcept
         {
             std::span<std::byte> buffer_span{
                 reinterpret_cast<std::byte*>(_buffer.data()),
                 _buffer.size() * sizeof(AlignedBytes)
             };
-            _node.tick({ NodeState {.buffer = buffer_span }, midi });
+            _node.tick({ NodeState {.buffer = buffer_span }, midi, index });
         }
     };
 }

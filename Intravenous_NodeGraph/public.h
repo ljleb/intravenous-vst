@@ -12,6 +12,6 @@ namespace iv {
         std::atomic<float>* noise_lo_pass,
         std::atomic<float>* noise_hi_pass
     ) noexcept;
-    void tick(std::span<MidiMessage const> midi) noexcept;
+    void tick(std::span<MidiMessage const> midi, size_t index) noexcept;
     void free_graph();
 }

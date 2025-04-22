@@ -6,7 +6,7 @@
 
 
 static std::any node_processor_storage;
-iv::NodeProcessor* node_processor;
+static iv::NodeProcessor* node_processor;
 
 template<typename Node>
 size_t emplace_back_id(std::vector<iv::TypeErasedNode>& nodes, Node const& node)
@@ -88,7 +88,8 @@ public:
         return std::array<iv::OutputConfig, 2>{};
     }
 
-    void tick(iv::TickState const& state) const noexcept {
+    void tick(iv::TickState const& state) const noexcept
+    {
         iv::Sample in_dry = state.inputs[0].get();
         iv::Sample in_control = state.inputs[1].get();
         iv::Sample dx = *_update_frequency;
@@ -128,7 +129,8 @@ public:
         return std::array<iv::OutputConfig, 1>{};
     }
 
-    void tick(iv::TickState const& state) const noexcept {
+    void tick(iv::TickState const& state) const noexcept
+    {
         auto& in = state.inputs[0];
         auto& ctrl = state.inputs[1];
         auto& out = state.outputs[0];
@@ -183,7 +185,8 @@ public:
         return std::array<iv::OutputConfig, 1>{};
     }
 
-    void tick(iv::TickState const& state) const noexcept {
+    void tick(iv::TickState const& state) const noexcept
+    {
         auto& in = state.inputs[0];
         auto& ctrl = state.inputs[1];
         auto& out = state.outputs[0];
@@ -226,8 +229,8 @@ size_t iv::init_graph(
     std::atomic<float>* warp_threshold,
     std::atomic<float>* noise_level,
     std::atomic<float>* noise_lo_pass,
-    std::atomic<float>* noise_hi_pass
-) noexcept {
+    std::atomic<float>* noise_hi_pass) noexcept
+{
     auto graph = make_subgraph([=](auto& nodes, auto& edges)
     {
         constexpr auto graph = iv::GRAPH_ID;
@@ -239,7 +242,7 @@ size_t iv::init_graph(
             auto level_knob = emplace_back_id(nodes, KnobNode<float>(noise_level));
             auto lo_pass_knob = emplace_back_id(nodes, KnobNode<float>(noise_lo_pass));
             auto hi_pass_knob = emplace_back_id(nodes, KnobNode<float>(noise_hi_pass));
-            auto generator = emplace_back_id(nodes, iv::UniformNoiseNode());
+            auto generator = emplace_back_id(nodes, iv::DeterministicUniformAESNoiseNode(-1, 1, 0ull));
             auto product = emplace_back_id(nodes, iv::ProductNode());
             auto lo_pass = emplace_back_id(nodes, SimpleIirLowPass(update_frequency));
             auto hi_pass = emplace_back_id(nodes, SimpleIirHighPass(update_frequency));
@@ -322,9 +325,9 @@ size_t iv::init_graph(
     return latency;
 }
 
-void iv::tick(std::span<MidiMessage const> midi) noexcept
+void iv::tick(std::span<MidiMessage const> midi, size_t index) noexcept
 {
-    node_processor->tick(midi);
+    node_processor->tick(midi, index);
 }
 
 void iv::free_graph()

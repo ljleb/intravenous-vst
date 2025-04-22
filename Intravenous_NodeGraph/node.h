@@ -139,7 +139,11 @@ namespace iv {
 
     struct TickState : public NodeState {
         std::span<MidiMessage const> midi;
-        double sample_rate;
+        size_t index;
+
+        TickState(NodeState base, std::span<MidiMessage const> midi, size_t index) noexcept :
+            NodeState(base), midi(midi), index(index)
+        {}
     };
 
     namespace details

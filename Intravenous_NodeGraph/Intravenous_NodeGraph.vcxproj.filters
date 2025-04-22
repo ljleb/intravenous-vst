@@ -13,6 +13,15 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Header Files\random123">
+      <UniqueIdentifier>{8a660280-5466-4230-8c4d-c27d81898d95}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\random123\conventional">
+      <UniqueIdentifier>{03f938f0-7ed8-48b5-9664-6007f43b586b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\random123\features">
+      <UniqueIdentifier>{c3162084-244c-46e8-b52c-21a7d44c1a88}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -47,6 +56,87 @@
     </ClInclude>
     <ClInclude Include="public.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\aes.h">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\array.h">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\ars.h">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\boxmuller.hpp">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\gsl_microrng.h">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\MicroURNG.hpp">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\philox.h">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\ReinterpretCtr.hpp">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\threefry.h">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\u01fixedpt.h">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\uniform.hpp">
+      <Filter>Header Files\random123</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\conventional\Engine.hpp">
+      <Filter>Header Files\random123\conventional</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\conventional\gsl_cbrng.h">
+      <Filter>Header Files\random123\conventional</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\clangfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\compilerfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\fujitsufeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\gccfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\iccfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\metalfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\msvcfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\nvccfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\open64features.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\openclfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\pgccfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\sse.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\sunprofeatures.h">
+      <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="random123\features\xlcfeatures.h">
+      <Filter>Header Files\random123\features</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

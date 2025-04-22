@@ -1,10 +1,12 @@
-#pragma once
+﻿#pragma once
 #include "graph_node.h"
 #include "node.h"
 #include "alligator.h"
 #include "polyblep.h"
 #include "fast_bitset.h"
 #include "note_number_lookup_table.h"
+#include "random123/aes.h"
+#include "random123/uniform.hpp"
 #include <functional>
 #include <array>
 #include <optional>
@@ -14,7 +16,7 @@
 #include <cstddef>
 
 
-namespace iv {	
+namespace iv {
     template<typename BinaryOp>
     constexpr bool binary_op_default_v = 0.0;
 
@@ -182,7 +184,7 @@ namespace iv {
             out.push(_value);
         }
     };
-
+    
     class UniformNoiseNode {
         std::optional<std::mt19937> _generator;
         std::optional<std::uniform_real_distribution<Sample>> _distribution;
@@ -214,6 +216,120 @@ namespace iv {
             }
             auto& out = state.outputs[0];
             out.push((*_distribution)(*_generator));
+        }
+    };
+
+    class DeterministicUniformNoiseNode {
+        Sample _min;
+        Sample _max;
+        size_t _seed;
+
+        uint64_t splitmix64(uint64_t index) const
+        {
+            size_t z = _seed + index * 0x9e3779b97f4a7c15ULL;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+            return z ^ (z >> 31);
+        }
+
+        double uniform_m11(uint64_t i) const {
+            // 1) harvest top 52 bits of i → mantissa
+            uint64_t mantissa = i >> (64 - 52);
+
+            // 2) set exponent to (bias+1)=1024 → raw range [2.0, 4.0)
+            //    exponent bits = 0x400, so the constant is 0x4000000000000000ULL
+            uint64_t bits = 0x4000000000000000ULL | mantissa;
+
+            // 3) reinterpret as double (in [2,4)), then subtract 3.0 → [-1,1)
+            double range = (_max - _min)/2.0;
+            double min = 2.0*_min - _max;
+            return std::bit_cast<double>(bits)*range + min;
+        }
+
+    public:
+        constexpr explicit DeterministicUniformNoiseNode(
+            Sample min = -1.0,
+            Sample max = 1.0,
+            std::optional<Sample> seed = {}
+        ) noexcept :
+            _min(min),
+            _max(max),
+            _seed(seed.has_value() ? *seed : (std::random_device{}() << (sizeof(unsigned int)*CHAR_BIT)) + std::random_device{}())
+        {}
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            auto& out = state.outputs[0];
+            uint64_t uniform_int = splitmix64(state.index);
+            Sample uniform_float = uniform_m11(uniform_int);
+            out.push(uniform_float);
+        }
+    };
+
+    class DeterministicUniformAESNoiseNode {
+        using Rng = r123::AESNI4x32;
+        Rng _generator;
+        Rng::key_type _seed;
+        Sample _min;
+        Sample _max;
+
+        static Rng::key_type make_seed(std::optional<uint64_t> seed_opt)
+        {
+            uint32_t seed_low, seed_high;
+            if (seed_opt.has_value())
+            {
+                uint64_t seed = *seed_opt;
+                seed_low = static_cast<uint32_t>(seed);
+                seed_high = static_cast<uint32_t>(seed >> 32);
+            }
+            else
+            {
+                seed_low = std::random_device{}();
+                seed_high = std::random_device{}();
+            }
+            return Rng::ukey_type { seed_low, seed_high, 0, 0 };
+        }
+
+        static Rng::ctr_type make_index(uint64_t index)
+        {
+            return {
+                static_cast<uint32_t>(index),
+                static_cast<uint32_t>(index >> 32),
+                0,
+                0,
+            };
+        }
+
+    public:
+        explicit DeterministicUniformAESNoiseNode(
+            Sample min = -1.0,
+            Sample max = 1.0,
+            std::optional<uint64_t> seed = {}
+        ) noexcept :
+            _seed(make_seed(seed)),
+            _min(min),
+            _max(max)
+        {
+            assert(haveAESNI() && "This machine does not have the AES-NI instruction set, use a different noise node.");
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            auto& out = state.outputs[0];
+            Rng::ctr_type counter = make_index(state.index);
+            unsigned int uniform_uint = _generator(counter, _seed)[0];
+            Sample uniform_float = r123::uneg11<Sample>(uniform_uint);
+            out.push(uniform_float);
         }
     };
 

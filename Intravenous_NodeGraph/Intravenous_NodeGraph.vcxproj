@@ -163,6 +163,33 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="polyblep.h" />
     <ClInclude Include="public.h" />
+    <ClInclude Include="random123\aes.h" />
+    <ClInclude Include="random123\array.h" />
+    <ClInclude Include="random123\ars.h" />
+    <ClInclude Include="random123\boxmuller.hpp" />
+    <ClInclude Include="random123\conventional\Engine.hpp" />
+    <ClInclude Include="random123\conventional\gsl_cbrng.h" />
+    <ClInclude Include="random123\features\clangfeatures.h" />
+    <ClInclude Include="random123\features\compilerfeatures.h" />
+    <ClInclude Include="random123\features\fujitsufeatures.h" />
+    <ClInclude Include="random123\features\gccfeatures.h" />
+    <ClInclude Include="random123\features\iccfeatures.h" />
+    <ClInclude Include="random123\features\metalfeatures.h" />
+    <ClInclude Include="random123\features\msvcfeatures.h" />
+    <ClInclude Include="random123\features\nvccfeatures.h" />
+    <ClInclude Include="random123\features\open64features.h" />
+    <ClInclude Include="random123\features\openclfeatures.h" />
+    <ClInclude Include="random123\features\pgccfeatures.h" />
+    <ClInclude Include="random123\features\sse.h" />
+    <ClInclude Include="random123\features\sunprofeatures.h" />
+    <ClInclude Include="random123\features\xlcfeatures.h" />
+    <ClInclude Include="random123\gsl_microrng.h" />
+    <ClInclude Include="random123\MicroURNG.hpp" />
+    <ClInclude Include="random123\philox.h" />
+    <ClInclude Include="random123\ReinterpretCtr.hpp" />
+    <ClInclude Include="random123\threefry.h" />
+    <ClInclude Include="random123\u01fixedpt.h" />
+    <ClInclude Include="random123\uniform.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="graph_node.cpp" />

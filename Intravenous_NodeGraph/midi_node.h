@@ -98,7 +98,7 @@ namespace iv {
                 {
                     note_state.inputs[extra_i + MIN_GRAPH_INPUTS].push(state.inputs[extra_i + MIN_INPUTS].get());
                 }
-                _graph_node.tick({ note_state, state.midi });
+                _graph_node.tick({ note_state, state.midi, state.index });
                 result += note_state.outputs[0].get();
             }
 

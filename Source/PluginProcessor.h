@@ -15,6 +15,7 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::vector<std::array<iv::MidiMessage, 128>> _midi_buffers;
     std::vector<uint8_t> _midi_buffer_sizes;
     double _update_frequency;
+    size_t _song_index;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 

@@ -46,7 +46,8 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_ID)),
     _noise_level(_value_tree_state.getRawParameterValue(NOISE_LEVEL_ID)),
     _noise_low_pass(_value_tree_state.getRawParameterValue(NOISE_LOW_PASS_ID)),
-    _noise_high_pass(_value_tree_state.getRawParameterValue(NOISE_HIGH_PASS_ID))
+    _noise_high_pass(_value_tree_state.getRawParameterValue(NOISE_HIGH_PASS_ID)),
+    _song_index(0)
 {
     setLatencySamples(iv::init_graph(&_update_frequency, _channels, _warp_threshold, _noise_level, _noise_low_pass, _noise_high_pass));
 }
@@ -152,16 +153,25 @@ void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, ju
         }
     }
 
+    auto const position_info = this->getPlayHead()->getPosition();
+    bool has_play_head = position_info.hasValue() && position_info->getTimeInSamples().hasValue();
+    if (has_play_head)
+    {
+        _song_index = *position_info->getTimeInSamples();
+    }
+
+    // move pointers to the start of the buffer
     for (size_t channel = 0; channel < channels; ++channel) {
         _channels[channel] = write_buffer[channel];
     }
 
     for (size_t sample = 0; sample < num_samples; ++sample) {
-        iv::tick({ _midi_buffers[sample].data(), _midi_buffer_sizes[sample] });
+        iv::tick({ _midi_buffers[sample].data(), _midi_buffer_sizes[sample] }, _song_index);
         for (size_t channel = 0; channel < channels; ++channel) {
             ++_channels[channel];
         }
         _midi_buffer_sizes[sample] = 0;
+        ++_song_index;
     }
 }
 
