@@ -547,7 +547,7 @@ namespace iv {
                     else seen[node] = true;
                 }
 
-                source_nodes.append_range(f(node));
+                f(node, source_nodes);
             }
         }
 
@@ -559,15 +559,14 @@ namespace iv {
             std::unordered_multimap<size_t, size_t> cyclic_parents_of;
 
             // traverse the graph for each node to find their respective cyclic parents
-            for_each_node_togological(std::move(source_nodes), [&](auto& initial_node)
+            for_each_node_togological(std::move(source_nodes), [&](size_t initial_node, std::deque<size_t>& queue)
             {
-                for_each_node_togological({ initial_node }, [&](size_t node)
+                for_each_node_togological({ initial_node }, [&](size_t node, std::deque<size_t>& queue)
                 {
                     // if we run into a node that already has cycles, then we are in a cycle and this cycle was already resolved
-                    if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) return std::vector<size_t>{};
+                    if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) return;
 
                     size_t const num_outputs = get_num_outputs(_nodes[node]);
-                    std::vector<size_t> next_nodes; next_nodes.reserve(num_outputs);
                     for (size_t out_i = 0; out_i < num_outputs; ++out_i)
                     {
                         if (auto it = target_of.find({ node, out_i }); it != target_of.end())
@@ -576,21 +575,18 @@ namespace iv {
                             if (child == initial_node)
                                 cyclic_parents_of.insert(std::make_pair(initial_node, node));
                             else
-                                next_nodes.push_back(child);
+                                queue.push_back(child);
                         }
                     }
-                    return next_nodes;
                 });
 
                 size_t const num_outputs = get_num_outputs(_nodes[initial_node]);
-                std::vector<size_t> next_nodes; next_nodes.reserve(num_outputs);
                 for (size_t out_i = 0; out_i < num_outputs; ++out_i) {
                     if (auto it = target_of.find({ initial_node, out_i }); it != target_of.end())
                     {
-                        next_nodes.push_back(it->second.node);
+                        queue.push_back(it->second.node);
                     }
                 }
-                return next_nodes;
             });
 
             return cyclic_parents_of;
@@ -608,9 +604,9 @@ namespace iv {
             std::vector<size_t> sorted;
             sorted.reserve(num_nodes);
 
-            for_each_node_togological<false>(source_nodes, [&](auto& node) -> std::vector<size_t>
+            for_each_node_togological<false>(source_nodes, [&](size_t node, std::deque<size_t>& queue)
             {
-                if (placed[node]) return {};
+                if (placed[node]) return;
 
                 size_t const num_inputs = get_num_inputs(_nodes[node]);
                 for (size_t input_port = 0; input_port < num_inputs; ++input_port) {
@@ -622,26 +618,24 @@ namespace iv {
                         if (placed[parent]) continue;
                         if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) continue;
 
-                        // the parent node connected to this input has not been placed yet
-                        // so we come back to this node later
-                        return { node };
+                        // the parent node connected to this input has not yet been placed
+                        // come back to this node later
+                        queue.push_back(node);
+                        return;
                     }
                 }
 
                 size_t const num_outputs = get_num_outputs(_nodes[node]);
-                std::vector<size_t> next_nodes; next_nodes.reserve(num_outputs);
                 for (size_t out_i = 0; out_i < num_outputs; ++out_i)
                 {
                     if (auto it = target_of.find({ node, out_i }); it != target_of.end())
                     {
-                        next_nodes.push_back(it->second.node);
+                        queue.push_back(it->second.node);
                     }
                 }
 
                 sorted.push_back(node);
                 placed[node] = true;
-
-                return next_nodes;
             });
 
             Nodes sorted_nodes;
