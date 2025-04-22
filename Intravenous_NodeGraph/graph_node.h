@@ -551,6 +551,38 @@ namespace iv {
             }
         }
 
+        template<typename F>
+        void for_each_source_port(
+            size_t node,
+            std::unordered_map<PortId, PortId> const& source_of,
+            F f) const
+        {
+            size_t const num_inputs = get_num_inputs(_nodes[node]);
+            for (size_t input_port = 0; input_port < num_inputs; ++input_port)
+            {
+                if (auto it = source_of.find({ node, input_port }); it != source_of.end())
+                {
+                    f(it->second);
+                }
+            }
+        }
+
+        template<typename F>
+        void for_each_target_port(
+            size_t node,
+            std::unordered_map<PortId, PortId> const& target_of,
+            F f) const
+        {
+            size_t const num_outputs = get_num_outputs(_nodes[node]);
+            for (size_t output_port = 0; output_port < num_outputs; ++output_port)
+            {
+                if (auto it = target_of.find({ node, output_port }); it != target_of.end())
+                {
+                    f(it->second);
+                }
+            }
+        }
+
         std::unordered_multimap<size_t, size_t> compute_cyclic_parents(
             std::deque<size_t> source_nodes,
             std::unordered_map<PortId, PortId> const& source_of,
@@ -566,27 +598,23 @@ namespace iv {
                     // if we run into a node that already has cycles, then we are in a cycle and this cycle was already resolved
                     if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) return;
 
-                    size_t const num_outputs = get_num_outputs(_nodes[node]);
-                    for (size_t out_i = 0; out_i < num_outputs; ++out_i)
+                    for_each_target_port(node, target_of, [&](PortId target)
                     {
-                        if (auto it = target_of.find({ node, out_i }); it != target_of.end())
+                        if (target.node == initial_node)
                         {
-                            size_t child = it->second.node;
-                            if (child == initial_node)
-                                cyclic_parents_of.insert(std::make_pair(initial_node, node));
-                            else
-                                queue.push_back(child);
+                            cyclic_parents_of.emplace(initial_node, node);
                         }
-                    }
+                        else
+                        {
+                            queue.push_back(target.node);
+                        }
+                    });
                 });
 
-                size_t const num_outputs = get_num_outputs(_nodes[initial_node]);
-                for (size_t out_i = 0; out_i < num_outputs; ++out_i) {
-                    if (auto it = target_of.find({ initial_node, out_i }); it != target_of.end())
-                    {
-                        queue.push_back(it->second.node);
-                    }
-                }
+                for_each_target_port(initial_node, target_of, [&](PortId target)
+                {
+                    queue.push_back(target.node);
+                });
             });
 
             return cyclic_parents_of;
@@ -608,31 +636,28 @@ namespace iv {
             {
                 if (placed[node]) return;
 
-                size_t const num_inputs = get_num_inputs(_nodes[node]);
-                for (size_t input_port = 0; input_port < num_inputs; ++input_port) {
-                    if (auto it = source_of.find({ node, input_port }); it != source_of.end())
-                    {
-                        size_t parent = it->second.node;
-
-                        if (parent == GRAPH_ID) continue;
-                        if (placed[parent]) continue;
-                        if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) continue;
-
-                        // the parent node connected to this input has not yet been placed
-                        // come back to this node later
-                        queue.push_back(node);
-                        return;
-                    }
-                }
-
-                size_t const num_outputs = get_num_outputs(_nodes[node]);
-                for (size_t out_i = 0; out_i < num_outputs; ++out_i)
+                bool all_parents_placed = true;
+                for_each_source_port(node, source_of, [&](PortId source)
                 {
-                    if (auto it = target_of.find({ node, out_i }); it != target_of.end())
-                    {
-                        queue.push_back(it->second.node);
-                    }
+                    if (source.node == GRAPH_ID) return;
+                    if (placed[source.node]) return;
+                    if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) return;
+
+                    all_parents_placed = false;
+                });
+
+                if (!all_parents_placed)
+                {
+                    // the parent node connected to some inputs have not yet been placed
+                    // come back to this node later
+                    queue.push_back(node);
+                    return;
                 }
+
+                for_each_target_port(node, target_of, [&](PortId target)
+                {
+                    queue.push_back(target.node);
+                });
 
                 sorted.push_back(node);
                 placed[node] = true;
