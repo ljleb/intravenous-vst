@@ -14,11 +14,19 @@ namespace iv {
         size_t node;
         size_t port;
 
+        PortId(size_t node = 0, size_t port = 0) :
+            node(node), port(port)
+        {}
+
         bool operator==(PortId const&) const noexcept = default;
     };
 
     struct GraphEdge {
         PortId source, target;
+        
+        GraphEdge(PortId source = {}, PortId target = {}) :
+            source(source), target(target)
+        {}
 
         bool operator==(GraphEdge const&) const noexcept = default;
     };
@@ -51,6 +59,56 @@ namespace iv {
         return pow2_size;
     };
 
+    static constexpr size_t GRAPH_ID = std::numeric_limits<size_t>::max();
+
+    class LatencyAccumulator {
+        std::unordered_map<PortId, size_t> _input_port_global_latencies;
+
+    public:
+        void align_latencies(auto& node, size_t node_i, auto const& input_configs, auto const& output_configs, auto const& target_of)
+        {
+            size_t node_global_latency = 0;
+            size_t const num_inputs = input_configs.size();
+            std::vector<size_t> input_port_extra_latencies(num_inputs);
+            for (size_t in_port = 0; in_port < num_inputs; ++in_port)
+            {
+                node_global_latency = std::max(node_global_latency, _input_port_global_latencies[{ node_i, in_port }]);
+            }
+            for (size_t in_port = 0; in_port < num_inputs; ++in_port)
+            {
+                input_port_extra_latencies[in_port] += node_global_latency - _input_port_global_latencies[{ node_i, in_port }];
+            }
+
+            if (node_i == GRAPH_ID) return;
+
+            node_global_latency += get_internal_latency(node);
+
+            size_t const num_outputs = output_configs.size();
+            for (size_t out_port = 0; out_port < num_outputs; ++out_port)
+            {
+                size_t output_latency = node_global_latency + output_configs[out_port].latency;
+                if (auto it = target_of.find({ node_i, out_port }); it != target_of.end())
+                {
+                    PortId target = it->second;
+                    if (target.node != node_i)  // don't delay immediately recursive nodes
+                    {                           // assumption: all parents have been processed
+                        _input_port_global_latencies[it->second] = output_latency;
+                    }
+                }
+            }
+        }
+
+        size_t delay_input(PortId input, size_t extra_delay)
+        {
+            return _input_port_global_latencies.at(input) += extra_delay;
+        }
+
+        size_t get_input_latency(PortId input) const
+        {
+            return _input_port_global_latencies.at(input);
+        }
+    };
+
     struct GraphNode {
         using Nodes = std::vector<TypeErasedNode>;
         using Edges = std::unordered_set<GraphEdge>;
@@ -64,9 +122,19 @@ namespace iv {
         size_t _num_public_inputs;
         size_t _num_public_outputs;
 
-    public:
-        static constexpr size_t GRAPH_ID = std::numeric_limits<size_t>::max();
+        auto make_source_target_edge_maps() const
+        {
+            std::unordered_map<PortId, PortId> source_of;
+            std::unordered_map<PortId, PortId> target_of;
+            for (GraphEdge const& edge : _edges)
+            {
+                source_of[edge.target] = edge.source;
+                target_of[edge.source] = edge.target;
+            }
+            return std::make_tuple(std::move(source_of), std::move(target_of));
+        }
 
+    public:
         explicit GraphNode(Nodes nodes, Edges edges, size_t num_inputs = 0, size_t num_outputs = 0) :
             _nodes(std::move(nodes)),
             _edges(std::move(edges)),
@@ -128,20 +196,13 @@ namespace iv {
             std::vector<InputConfig> private_input_configs(_num_public_outputs);
             OutputConfig private_outputs_config;
 
-            GraphState& graph_state = allocator.initialize_object<GraphState>();
-            allocator.assign(graph_state.node_states, allocator.initialize_array<NodeState>(num_nodes));
+            GraphState& graph_state = allocator.new_object<GraphState>();
+            allocator.assign(graph_state.node_states, allocator.new_array<NodeState>(num_nodes));
             allocator.assign(graph_state.outputs, allocator.allocate_array<OutputPort>(_num_public_inputs));
 
-            std::unordered_map<PortId, PortId> source_of;
-            std::unordered_map<PortId, PortId> target_of;
-            for (GraphEdge const& edge : _edges)
-            {
-                source_of[edge.target] = edge.source;
-                target_of[edge.source] = edge.target;
-            }
+            auto [source_of, target_of] = make_source_target_edge_maps();
 
-            std::unordered_map<PortId, size_t> input_port_global_latencies;
-            std::unordered_map<GraphEdge, size_t> corrected_latencies;
+            LatencyAccumulator latency_accumulator;
             std::unordered_map<PortId, std::span<Sample>> input_ports_samples;
             std::unordered_map<size_t, std::span<SharedPortData>> node_port_data;
 
@@ -170,30 +231,11 @@ namespace iv {
                 if (node_i != GRAPH_ID) allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(num_outputs));
                 allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(num_inputs));
 
-                // align latencies
-                size_t node_global_latency = 0;
-                std::vector<size_t> input_port_extra_latencies(num_inputs);
-                for (size_t in_port = 0; in_port < num_inputs; ++in_port)
-                {
-                    node_global_latency = std::max(node_global_latency, input_port_global_latencies[{ node_i, in_port }]);
-                }
-                for (size_t in_port = 0; in_port < num_inputs; ++in_port)
-                {
-                    input_port_extra_latencies[in_port] += node_global_latency - input_port_global_latencies[{ node_i, in_port }];
-                }
-                if (node_i != GRAPH_ID) {
-                    node_global_latency += get_internal_latency(node);
-                    for (size_t out_port = 0; out_port < num_outputs; ++out_port)
-                    {
-                        size_t output_latency = node_global_latency + output_configs[out_port].latency;
-                        PortId connection = target_of[{ node_i, out_port }];
-                        input_port_global_latencies[connection] = output_latency;
-                    }
-                }
+                latency_accumulator.align_latencies(node, node_i, input_configs, output_configs, target_of);
 
                 for (size_t input_i = 0; input_i < num_inputs; ++input_i)
                 {
-                    PortId this_input{ node_i, input_i };
+                    PortId this_input { node_i, input_i };
                     InputConfig const& input_config = input_configs[input_i];
                     size_t num_port_samples;
 
@@ -202,14 +244,12 @@ namespace iv {
                         // input is connected to output, let's setup both
                         size_t output_node_i = it->second.node;
                         size_t output_port_i = it->second.port;
-                        GraphEdge this_edge{ it->second, this_input };
 
                         OutputConfig const& output_config = (output_node_i == GRAPH_ID)
                             ? private_outputs_config
                             : get_outputs(_nodes[output_node_i])[output_port_i];
 
-                        size_t const corrected_latency = output_config.latency + input_port_extra_latencies[input_i];
-                        corrected_latencies.insert({ this_edge, corrected_latency });
+                        size_t const corrected_latency = latency_accumulator.delay_input(this_input, output_config.latency);
                         num_port_samples = calculate_port_buffer_size(corrected_latency, input_config.history);
                     }
                     else
@@ -269,7 +309,7 @@ namespace iv {
 
                     for (size_t input_i = 0; input_i < num_inputs; ++input_i)
                     {
-                        PortId this_input{ node_i, input_i };
+                        PortId this_input { node_i, input_i };
                         InputConfig const& input_config = input_configs[input_i];
                         InputPort& input_port = allocator.at(node_state.inputs, input_i);
                         SharedPortData& input_port_data = allocator.at(inputs_port_data, input_i);
@@ -285,13 +325,12 @@ namespace iv {
                             // input is connected to output, let's setup both
                             size_t output_node_i = it->second.node;
                             size_t output_port_i = it->second.port;
-                            GraphEdge this_edge{ it->second, this_input };
 
                             OutputPort& output_port = (output_node_i == GRAPH_ID)
                                 ? allocator.at(graph_state.outputs, output_port_i)
                                 : allocator.at(allocator.at(graph_state.node_states, output_node_i).outputs, output_port_i);
 
-                            size_t const corrected_latency = corrected_latencies[this_edge];
+                            size_t corrected_latency = latency_accumulator.get_input_latency(this_input);
                             allocator.construct_at(&input_port_data, port_samples, corrected_latency);
                             allocator.construct_at(&output_port, input_port_data);
                         }
@@ -466,152 +505,155 @@ namespace iv {
             }
         }
 
-        void sort_nodes()
+        std::deque<size_t> make_source_nodes_queue(
+            std::unordered_map<PortId, PortId> const& source_of,
+            std::unordered_map<PortId, PortId> const& target_of) const
         {
-            const size_t n = _nodes.size();
+            std::deque<size_t> queue;
 
-            std::unordered_map<PortId, PortId> forward_edges_map;
-            std::unordered_map<PortId, PortId> backward_edges_map;
-            for (GraphEdge const& edge : _edges)
+            // include all nodes with all input ports disconnected or directly connected to the private output ports of the graph
+            size_t const num_nodes = _nodes.size();
+            for (size_t node = 0; node < num_nodes; ++node)
             {
-                forward_edges_map[edge.source] = edge.target;
-                backward_edges_map[edge.target] = edge.source;
+                bool all_inputs_disconnected = true;
+                size_t const num_inputs = get_num_inputs(_nodes[node]);
+                for (size_t input_port = 0; input_port < num_inputs; ++input_port)
+                {
+                    if (auto it = source_of.find({ node, input_port }); it != source_of.end() && it->second.node != GRAPH_ID)
+                    {
+                        all_inputs_disconnected = false;
+                        break;
+                    }
+                }
+                if (all_inputs_disconnected) queue.push_back(node);
             }
 
-            auto make_heads_queue = [&]()
-            {
-                std::deque<size_t> queue;
+            return queue;
+        }
 
-                // include all nodes with 0 connected input ports
-                for (size_t node = 0; node < n; ++node)
+        template<bool guard_infinite_loop = true, typename F>
+        void for_each_node_togological(std::deque<size_t> source_nodes, F f) const
+        {
+            size_t const num_nodes = _nodes.size();
+            std::vector<bool> seen(num_nodes, false);
+            while (!source_nodes.empty())
+            {
+                size_t node = source_nodes.front();
+                source_nodes.pop_front();
+                if (node == GRAPH_ID) continue;
+                if constexpr (guard_infinite_loop)
                 {
-                    bool all_inputs_disconnected = true;
-                    size_t const num_inputs = get_num_inputs(_nodes[node]);
-                    for (size_t input_port = 0; input_port < num_inputs; ++input_port)
-                    {
-                        if (backward_edges_map.contains({ node, input_port }))
-                        {
-                            all_inputs_disconnected = false;
-                            break;
-                        }
-                    }
-                    if (all_inputs_disconnected) queue.push_back(node);
+                    if (seen[node]) continue;
+                    else seen[node] = true;
                 }
-                // include all nodes directly connected to the source ports of the graph
-                for (size_t private_out_i = 0; private_out_i < _num_public_inputs; ++private_out_i)
-                {
-                    if (auto it = forward_edges_map.find({ GRAPH_ID, private_out_i }); it != forward_edges_map.end())
-                    {
-                        queue.push_back(it->second.node);
-                    }
-                }
-                return queue;
-            };
+
+                source_nodes.append_range(f(node));
+            }
+        }
+
+        std::unordered_multimap<size_t, size_t> compute_cyclic_parents(
+            std::deque<size_t> source_nodes,
+            std::unordered_map<PortId, PortId> const& source_of,
+            std::unordered_map<PortId, PortId> const& target_of
+        ) const
+        {
+            std::unordered_multimap<size_t, size_t> cyclic_parents_of;
 
             // traverse the graph for each node to find their respective cyclic parents
-            std::unordered_map<size_t, std::unordered_set<size_t>> cyclic_parents_of(n);
+            for_each_node_togological(std::move(source_nodes), [&](auto& initial_node)
             {
-                auto queue = make_heads_queue();
-                std::vector<bool> seen(n, false);
-                while (!queue.empty())
+                for_each_node_togological({ initial_node }, [&](size_t node)
                 {
-                    size_t initial_node = queue.front();
-                    queue.pop_front();
-                    if (initial_node == GRAPH_ID || seen[initial_node]) continue;
-                    seen[initial_node] = true;
+                    // if we run into a node that already has cycles, then we are in a cycle and this cycle was already resolved
+                    if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) return std::vector<size_t>{};
 
-                    std::vector<bool> inner_seen(n, false);
-                    std::deque<size_t> inner_queue;
-                    inner_queue.push_back(initial_node);
-
-                    while (!inner_queue.empty())
-                    {
-                        size_t node = inner_queue.front();
-                        inner_queue.pop_front();
-                        if (node == GRAPH_ID || inner_seen[node]) continue;
-                        inner_seen[node] = true;
-
-                        // if we run into a node that already has cycles, then we are in a cycle and this cycle was already resolved
-                        if (!cyclic_parents_of[node].empty()) continue;
-
-                        size_t const num_outputs = get_num_outputs(_nodes[node]);
-                        for (size_t out_i = 0; out_i < num_outputs; ++out_i)
-                        {
-                            if (auto it = forward_edges_map.find({ node, out_i }); it != forward_edges_map.end())
-                            {
-                                size_t child = it->second.node;
-                                if (child == initial_node)
-                                {
-                                    cyclic_parents_of[initial_node].insert(node);
-                                }
-                                else
-                                {
-                                    inner_queue.push_back(child);
-                                }
-                            }
-                        }
-                    }
-
-                    size_t const num_outputs = get_num_outputs(_nodes[initial_node]);
-                    for (size_t out_i = 0; out_i < num_outputs; ++out_i) {
-                        if (auto it = forward_edges_map.find({ initial_node, out_i }); it != forward_edges_map.end())
-                        {
-                            queue.push_back(it->second.node);
-                        }
-                    }
-                }
-            }
-
-            auto queue = make_heads_queue();
-            std::vector<bool> placed(n, false);
-            std::vector<size_t> sorted;
-            sorted.reserve(n);
-
-            while (!queue.empty())
-            {
-                size_t node = queue.front();
-                queue.pop_front();
-                if (node == GRAPH_ID || placed[node]) continue;
-
-                bool all_dependencies_satisfied = true;
-                size_t const num_inputs = get_num_inputs(_nodes[node]);
-                for (size_t in_i = 0; in_i < num_inputs; ++in_i) {
-                    if (auto it = backward_edges_map.find({ node, in_i }); it != backward_edges_map.end())
-                    {
-                        size_t parent = it->second.node;
-                        if (parent != GRAPH_ID && !placed[parent] && !cyclic_parents_of[node].contains(parent)) {
-                            all_dependencies_satisfied = false;
-                            break;
-                        }
-                    }
-                }
-
-                if (all_dependencies_satisfied) {
                     size_t const num_outputs = get_num_outputs(_nodes[node]);
+                    std::vector<size_t> next_nodes; next_nodes.reserve(num_outputs);
                     for (size_t out_i = 0; out_i < num_outputs; ++out_i)
                     {
-                        if (auto it = forward_edges_map.find({ node, out_i }); it != forward_edges_map.end())
+                        if (auto it = target_of.find({ node, out_i }); it != target_of.end())
                         {
-                            queue.push_back(it->second.node);
+                            size_t child = it->second.node;
+                            if (child == initial_node)
+                                cyclic_parents_of.insert(std::make_pair(initial_node, node));
+                            else
+                                next_nodes.push_back(child);
                         }
                     }
-                    sorted.push_back(node);
-                    placed[node] = true;
+                    return next_nodes;
+                });
+
+                size_t const num_outputs = get_num_outputs(_nodes[initial_node]);
+                std::vector<size_t> next_nodes; next_nodes.reserve(num_outputs);
+                for (size_t out_i = 0; out_i < num_outputs; ++out_i) {
+                    if (auto it = target_of.find({ initial_node, out_i }); it != target_of.end())
+                    {
+                        next_nodes.push_back(it->second.node);
+                    }
                 }
-                else {
-                    queue.push_back(node);
+                return next_nodes;
+            });
+
+            return cyclic_parents_of;
+        }
+
+        void sort_nodes()
+        {
+            const size_t num_nodes = _nodes.size();
+            auto const [source_of, target_of] = make_source_target_edge_maps();
+
+            std::deque<size_t> const source_nodes = make_source_nodes_queue(source_of, target_of);
+            auto const cyclic_parents_of = compute_cyclic_parents(source_nodes, source_of, target_of);
+            
+            std::vector<bool> placed(num_nodes, false);
+            std::vector<size_t> sorted;
+            sorted.reserve(num_nodes);
+
+            for_each_node_togological<false>(source_nodes, [&](auto& node)
+            {
+                if (placed[node]) return std::vector<size_t> {};
+
+                size_t const num_inputs = get_num_inputs(_nodes[node]);
+                for (size_t input_port = 0; input_port < num_inputs; ++input_port) {
+                    if (auto it = source_of.find({ node, input_port }); it != source_of.end())
+                    {
+                        size_t parent = it->second.node;
+
+                        if (parent == GRAPH_ID) continue;
+                        if (placed[parent]) continue;
+                        if (auto it = cyclic_parents_of.equal_range(node); it.first != it.second) continue;
+
+                        // the parent node connected to this input has not been placed yet
+                        // so we come back to this node later
+                        return std::vector<size_t> { node };
+                    }
                 }
-            }
+
+                size_t const num_outputs = get_num_outputs(_nodes[node]);
+                std::vector<size_t> next_nodes; next_nodes.reserve(num_outputs);
+                for (size_t out_i = 0; out_i < num_outputs; ++out_i)
+                {
+                    if (auto it = target_of.find({ node, out_i }); it != target_of.end())
+                    {
+                        next_nodes.push_back(it->second.node);
+                    }
+                }
+
+                sorted.push_back(node);
+                placed[node] = true;
+
+                return next_nodes;
+            });
 
             Nodes sorted_nodes;
-            sorted_nodes.reserve(n);
-            for (size_t old_i = 0; old_i < n; ++old_i)
+            sorted_nodes.reserve(num_nodes);
+            for (size_t old_i = 0; old_i < num_nodes; ++old_i)
             {
                 sorted_nodes.push_back(std::move(_nodes[sorted[old_i]]));
             }
             _nodes.swap(sorted_nodes);
 
-            std::vector<size_t> reverse_sorted(n);
+            std::vector<size_t> reverse_sorted(num_nodes);
             std::ranges::iota(reverse_sorted, 0);
             std::ranges::stable_sort(reverse_sorted, [&](int i1, int i2) {return sorted[i1] < sorted[i2]; });
 
@@ -630,31 +672,18 @@ namespace iv {
 
         void validate_graph() const
         {
-            std::vector<InputConfig> _private_input_configs(_num_public_outputs);
-            std::vector<OutputConfig> _private_output_configs(_num_public_inputs);
-
             for (auto const& edge : _edges)
             {
-                std::span<OutputConfig const> source_outputs;
-                if (edge.source.node == GRAPH_ID)
-                {
-                    source_outputs = _private_output_configs;
-                }
-                else
-                {
-                    source_outputs = get_outputs(_nodes[edge.source.node]);
-                }
-                std::span<InputConfig const> target_inputs;
-                if (edge.target.node == GRAPH_ID)
-                {
-                    target_inputs = _private_input_configs;
-                }
-                else
-                {
-                    target_inputs = get_inputs(_nodes[edge.target.node]);
-                }
-                assert(edge.source.port < source_outputs.size() && "bad connection");
-                assert(edge.target.port < target_inputs.size() && "bad connection");
+                size_t source_num_outputs = (edge.source.node == GRAPH_ID)
+                    ? _num_public_inputs  // number of private outputs
+                    : get_num_outputs(_nodes[edge.source.node]);
+
+                size_t target_num_inputs = (edge.target.node == GRAPH_ID)
+                    ? _num_public_outputs  // number of private inputs
+                    : get_num_inputs(_nodes[edge.target.node]);
+
+                assert(edge.source.port < source_num_outputs && "bad connection: source output port out of range");
+                assert(edge.target.port < target_num_inputs && "bad connection: target input port out of range");
             }
         }
     };

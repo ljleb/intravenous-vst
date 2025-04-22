@@ -5,7 +5,8 @@
 
 juce::String const IntravenousAudioProcessor::WARP_THRESHOLD_ID = "warp_threshold";
 juce::String const IntravenousAudioProcessor::NOISE_LEVEL_ID = "noise_level";
-juce::String const IntravenousAudioProcessor::IIR_OUTW0_ID = "iir_outw0";
+juce::String const IntravenousAudioProcessor::NOISE_LOW_PASS_ID = "noise_low_pass";
+juce::String const IntravenousAudioProcessor::NOISE_HIGH_PASS_ID = "noise_high_pass";
 
 IntravenousAudioProcessor::IntravenousAudioProcessor():
     #ifndef JucePlugin_PreferredChannelConfigurations
@@ -28,20 +29,26 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
             std::make_unique<juce::AudioParameterFloat>(
                 NOISE_LEVEL_ID,
                 "Noise Level",
-                juce::NormalisableRange<float>(0.f, 0.1f, .0001f),
+                juce::NormalisableRange<float>(0.f, 1.0f, .0001f),
                 0.f),
             std::make_unique<juce::AudioParameterFloat>(
-                IIR_OUTW0_ID,
-                "IIR Out Weight 0",
+                NOISE_LOW_PASS_ID,
+                "Noise Low Pass",
                 juce::NormalisableRange<float>(0.f, 1.f, .0001f),
                 0.f),
+            std::make_unique<juce::AudioParameterFloat>(
+                NOISE_HIGH_PASS_ID,
+                "Noise High Pass",
+                juce::NormalisableRange<float>(0.f, 1.f, .0001f),
+                1.f),
         }
     },
     _warp_threshold(_value_tree_state.getRawParameterValue(WARP_THRESHOLD_ID)),
     _noise_level(_value_tree_state.getRawParameterValue(NOISE_LEVEL_ID)),
-    _iir_outw0(_value_tree_state.getRawParameterValue(IIR_OUTW0_ID))
+    _noise_low_pass(_value_tree_state.getRawParameterValue(NOISE_LOW_PASS_ID)),
+    _noise_high_pass(_value_tree_state.getRawParameterValue(NOISE_HIGH_PASS_ID))
 {
-    setLatencySamples(iv::init_graph(&_update_frequency, _channels, _warp_threshold, _noise_level, _iir_outw0));
+    setLatencySamples(iv::init_graph(&_update_frequency, _channels, _warp_threshold, _noise_level, _noise_low_pass, _noise_high_pass));
 }
 
 IntravenousAudioProcessor::~IntravenousAudioProcessor() {
@@ -91,7 +98,7 @@ void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_pe
     _midi_buffers.resize(samples_per_block);
     _midi_buffer_sizes.resize(samples_per_block, 0);
     _midi_buffers.shrink_to_fit();
-    setLatencySamples(iv::init_graph(&_update_frequency, _channels, _warp_threshold, _noise_level, _iir_outw0));
+    setLatencySamples(iv::init_graph(&_update_frequency, _channels, _warp_threshold, _noise_level, _noise_low_pass, _noise_high_pass));
 }
 
 void IntravenousAudioProcessor::releaseResources() {
@@ -118,6 +125,7 @@ bool IntravenousAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
 }
 #endif
 
+#define JUCE_DISABLE_ASSERTIONS 0
 void IntravenousAudioProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi_data) {
     juce::ScopedNoDenormals no_denormals;
     float* const* const write_buffer = audio.getArrayOfWritePointers();

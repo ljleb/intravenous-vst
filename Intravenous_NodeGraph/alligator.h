@@ -31,7 +31,7 @@ namespace iv {
         }
 
         template<typename T>
-        auto initialize_array(size_t number)
+        auto new_array(size_t number)
         {
             if (number == 0) return std::span<T>{};
             size_t num_bytes = number * sizeof(T);
@@ -45,7 +45,7 @@ namespace iv {
         };
 
         template<typename T>
-        T& initialize_object()
+        T& new_object()
         {
             size_t num_bytes = sizeof(T);
             size_t const alignment = alignof(T);
@@ -60,7 +60,7 @@ namespace iv {
         template<typename T>
         auto allocate_array(size_t number)
         {
-            auto span = initialize_array<AlignedStorage<T>>(number);
+            auto span = new_array<AlignedStorage<T>>(number);
             return std::span<T> { &(span.data()->object), span.size() };
         };
 
@@ -134,14 +134,14 @@ namespace iv {
         };
 
         template<typename T>
-        auto initialize_array(size_t number)
+        auto new_array(size_t number)
         {
             advance_buffer<T>(number);
             return std::span<T> { static_cast<T*>(nullptr), number };
         };
 
         template<typename T>
-        T& initialize_object()
+        T& new_object()
         {
             static AlignedStorage<T> storage;
             advance_buffer<AlignedStorage<T>>(1);
@@ -151,7 +151,7 @@ namespace iv {
         template<typename T>
         auto allocate_array(size_t number)
         {
-            std::span<AlignedStorage<T>> span = initialize_array<AlignedStorage<T>>(number);
+            std::span<AlignedStorage<T>> span = new_array<AlignedStorage<T>>(number);
             return std::span<T> { static_cast<T*>(nullptr), span.size() };
         };
 
@@ -200,15 +200,15 @@ namespace iv {
         }
 
         template<typename T>
-        auto initialize_array(size_t number)
+        auto new_array(size_t number)
         {
-            return std::visit([=](auto&& allocator) { return allocator.get().initialize_array<T>(number); }, _allocator);
+            return std::visit([=](auto&& allocator) { return allocator.get().new_array<T>(number); }, _allocator);
         };
 
         template<typename T>
-        auto initialize_object() -> T&
+        auto new_object() -> T&
         {
-            return std::visit([](auto&& allocator) -> T& { return allocator.get().initialize_object<T>(); }, _allocator);
+            return std::visit([](auto&& allocator) -> T& { return allocator.get().new_object<T>(); }, _allocator);
         }
 
         template<typename T>

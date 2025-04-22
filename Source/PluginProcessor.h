@@ -8,7 +8,8 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
 
     std::atomic<float>* _warp_threshold;
     std::atomic<float>* _noise_level;
-    std::atomic<float>* _iir_outw0;
+    std::atomic<float>* _noise_low_pass;
+    std::atomic<float>* _noise_high_pass;
 
     iv::Sample* _channels[2];
     std::vector<std::array<iv::MidiMessage, 128>> _midi_buffers;
@@ -20,7 +21,8 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
 public:
     static juce::String const WARP_THRESHOLD_ID;
     static juce::String const NOISE_LEVEL_ID;
-    static juce::String const IIR_OUTW0_ID;
+    static juce::String const NOISE_LOW_PASS_ID;
+    static juce::String const NOISE_HIGH_PASS_ID;
 
     IntravenousAudioProcessor();
     ~IntravenousAudioProcessor() override;

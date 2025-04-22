@@ -9,7 +9,8 @@ namespace iv {
         Sample* write_buffer[2],
         std::atomic<float>* warp_threshold,
         std::atomic<float>* noise_level,
-        std::atomic<float>* noise_filter
+        std::atomic<float>* noise_lo_pass,
+        std::atomic<float>* noise_hi_pass
     ) noexcept;
     void tick(std::span<MidiMessage const> midi) noexcept;
     void free_graph();
