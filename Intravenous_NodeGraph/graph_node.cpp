@@ -224,7 +224,7 @@ public:
 };
 
 size_t iv::init_graph(
-    double* update_frequency,
+    double* sample_period,
     Sample* channels[2],
     std::atomic<float>* warp_threshold,
     std::atomic<float>* noise_level,
@@ -244,8 +244,8 @@ size_t iv::init_graph(
             auto hi_pass_knob = emplace_back_id(nodes, KnobNode<float>(noise_hi_pass));
             auto generator = emplace_back_id(nodes, iv::DeterministicUniformAESNoiseNode(-1, 1, 0ull));
             auto product = emplace_back_id(nodes, iv::ProductNode());
-            auto lo_pass = emplace_back_id(nodes, SimpleIirLowPass(update_frequency));
-            auto hi_pass = emplace_back_id(nodes, SimpleIirHighPass(update_frequency));
+            auto lo_pass = emplace_back_id(nodes, SimpleIirLowPass(sample_period));
+            auto hi_pass = emplace_back_id(nodes, SimpleIirHighPass(sample_period));
 
             edges.insert(iv::GraphEdge { { generator,    0 }, { lo_pass, 0 } });
             edges.insert(iv::GraphEdge { { lo_pass_knob, 0 }, { lo_pass, 1 } });
@@ -265,10 +265,13 @@ size_t iv::init_graph(
             size_t voice_warp_threshold_port = 2;
             size_t voice_noise_generator_port = 3;
 
-            auto integrator = emplace_back_id(nodes, iv::Integrator(update_frequency));
+            auto integrator = emplace_back_id(nodes, iv::Integrator(sample_period));
             auto warper = emplace_back_id(nodes, iv::WarperNode());
             auto dummy_sink = emplace_back_id(nodes, iv::DummySinkNode());
-            auto predictor = emplace_back_id(nodes, iv::LStepPredictor(1, 1000, 1.f / (1 << 14)));
+            auto predictor = emplace_back_id(nodes, iv::TanhResidualPredictor(1, 16, 16, 8, 1e-6));
+            auto lo_pass = emplace_back_id(nodes, SimpleIirLowPass(sample_period));
+            auto lo_pass_coef = emplace_back_id(nodes, iv::ConstantNode(0.75));
+            //auto lo_pass2 = emplace_back_id(nodes, SimpleIirLowPass(sample_period));
 
             auto frequency = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
             {
@@ -284,11 +287,23 @@ size_t iv::init_graph(
 
             edges.insert(iv::GraphEdge { { graph, frequency_port }, { frequency, 0 } });
 
+            // low pass
+            edges.insert(iv::GraphEdge{ { lo_pass_coef, 0 }, { lo_pass, 1 } });
+            //edges.insert(iv::GraphEdge{ { lo_pass_coef, 0 }, { lo_pass2, 1 } });
+
             // main loop
-            edges.insert(iv::GraphEdge { { integrator, 0 }, { predictor,     0 } });
-            edges.insert(iv::GraphEdge { { predictor,     0 }, { warper,  0 } });
-            edges.insert(iv::GraphEdge { { warper,  0 }, { integrator, 0 } });
-            edges.insert(iv::GraphEdge { { warper,     1 }, { integrator, 0 } });
+            //edges.insert(iv::GraphEdge { { integrator, 0 }, { lo_pass,    0 } });
+            //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { predictor,  0 } });
+            //edges.insert(iv::GraphEdge { { predictor,    0 }, { lo_pass2,  0 } });
+            //edges.insert(iv::GraphEdge { { lo_pass2,  0 }, { warper,     0 } });
+
+            //edges.insert(iv::GraphEdge { { integrator, 0 }, { predictor,  0 } });
+            edges.insert(iv::GraphEdge { { integrator, 0 }, { lo_pass,    0 } });
+            edges.insert(iv::GraphEdge { { lo_pass,    0 }, { predictor,  0 } });
+
+            edges.insert(iv::GraphEdge { { predictor,  0 }, { warper,     0 } });
+            edges.insert(iv::GraphEdge { { warper,     0 }, { integrator, 0 } });
+            //edges.insert(iv::GraphEdge { { warper,     1 }, { integrator, 0 } });
             edges.insert(iv::GraphEdge { { warper,     1 }, { dummy_sink, 0 } });
 
             // knobs

@@ -343,13 +343,13 @@ namespace iv {
         }
     };
 
-    class LStepPredictor {
+    class NlmsFuturePredictor {
         size_t _look_ahead;
         size_t _order;
-        float _learning_rate;
+        float _lr;
 
         struct State {
-            std::span<Sample> w;          // coefficient vector, length _order
+            std::span<Sample> w;
         };
 
         template<typename Buf>
@@ -360,14 +360,14 @@ namespace iv {
         }
 
     public:
-        constexpr LStepPredictor(
+        constexpr NlmsFuturePredictor(
             size_t look_ahead,
             size_t order,
-            float learning_rate = 1.f/4096.f
+            float lr = 1e-4
         ) noexcept
             : _look_ahead(look_ahead)
             , _order(order)
-            , _learning_rate(learning_rate)
+            , _lr(lr)
         {
             assert(_order >= _look_ahead && "window length must cover look-ahead");
         }
@@ -375,7 +375,7 @@ namespace iv {
         auto inputs() const noexcept
         {
             return std::array {
-                InputConfig { .history = _look_ahead + _order - 1 }
+                InputConfig { .history = _order - 1 }
             };
         }
 
@@ -392,7 +392,7 @@ namespace iv {
             State& st = alloc.new_object<State>();
             alloc.assign(st.w, alloc.new_array<float>(_order));
             alloc.fill_n(st.w, 0.f);              // cold-start weights
-            //alloc.assign(alloc.at(st.w, _look_ahead),  1.f);
+            alloc.assign(alloc.at(st.w, 0),  1.f);
         }
 
         void tick(TickState const& ts) const noexcept
@@ -404,20 +404,20 @@ namespace iv {
             /* ---------- form prediction y(n) ---------------------- */
             float y = 0.f;
             for (size_t k = 0; k < _order; ++k)
-                y += st.w[k] * in.get(_look_ahead + k);        // x(n-L-k)
+                y += st.w[k] * in.get(k);        // x(n-L-k)
 
             /* deliver prediction this sample */
             out.push(y);
 
             /* ---------- LMS adaptation, executes L ticks later ---- */
-            float real = in.get(_look_ahead);                  // x(n-L)  now available
-            float past_pred = out.get(_look_ahead);            // ŷ(n-L) produced L ticks ago
+            float real = in.get(0);
+            float past_pred = out.get(_look_ahead);
             float err = real - past_pred;
 
             /* normalisation */
             float norm = 1e-6f;
             for (size_t k = 0; k < _order; ++k) {
-                float s = in.get(_look_ahead + k);
+                float s = in.get(k);
                 norm += s * s;
             }
             const float beta = 0.01f;/*
@@ -425,13 +425,137 @@ namespace iv {
             mu_dyn = std::clamp(mu_dyn, _learning_rate, 4.f * _learning_rate);*/
 
             float err_clip = 0.1;
-            if (fabs(err) > err_clip) err = copysign(err_clip, err);
+            //if (fabs(err) > err_clip) err = copysign(err_clip, err);
 
-            float g = _learning_rate * err / norm;
+            float g = _lr * err / norm;
 
             /* w ← w + g * x_vec */
             for (size_t k = 0; k < _order; ++k)
-                st.w[k] += g * in.get(_look_ahead + k);
+                st.w[k] += g * in.get(k);
+        }
+    };
+
+    class TanhResidualPredictor {
+        size_t _L;       // look-ahead (latency still present on edge)
+        size_t _p;       // FIR window taps
+        size_t _q;       // AR taps (past residual outputs)
+        size_t _h;       // hidden units
+        float  _mu;      // base learning-rate
+
+        struct State {
+            std::span<float> W1;   // h × (p+q)
+            std::span<float> W2;   // h
+            std::span<float> b1;
+            std::span<float> a;    // scratch h
+        };
+
+        template<typename Buf>
+        static State& get_state(Buf buffer) {
+            void* obj = buffer.data();  std::size_t sz = buffer.size();
+            return *reinterpret_cast<State*>(std::align(
+                alignof(State), sizeof(State), obj, sz));
+        }
+
+    public:
+        constexpr TanhResidualPredictor(
+            size_t look_ahead,
+            size_t order,
+            size_t ar_order = 2,
+            size_t hidden = 8,
+            float  mu = 1e-6f) noexcept
+            : _L(look_ahead)
+            , _p(order)
+            , _q(ar_order)
+            , _h(hidden)
+            , _mu(mu)
+        {
+            assert(_p >= _L && "window length must cover look-ahead");
+        }
+
+        /* graph meta-data */
+        auto inputs()  const noexcept {
+            return std::array {            // need x[n-L] … x[n-L-(p-1)]
+                InputConfig {.history = _p - 1 }
+            };
+        }
+        auto outputs() const noexcept {
+            return std::array {
+                OutputConfig { .history = _L + _q }   // recall ŷ[n-L]
+            };
+        }
+
+        template<typename Allocator>
+        void init_buffer(Allocator& allocator) const
+        {
+            State& s = allocator.new_object<State>();
+            allocator.assign(s.W1, allocator.new_array<float>(_h * (_p + _q)));
+            allocator.assign(s.W2, allocator.new_array<float>(_h));
+            allocator.assign(s.b1, allocator.new_array<float>(_h));
+            allocator.assign(s.a, allocator.new_array<float>(_h));
+            allocator.fill_n(s.W1, 0.f);
+            allocator.fill_n(s.W2, 0.f);
+            allocator.fill_n(s.b1, 0.f);
+        }
+
+        void tick(TickState const& ts) const noexcept
+        {
+            State& s = get_state(ts.buffer);
+            auto& in = ts.inputs[0];
+            auto& out = ts.outputs[0];
+
+            auto x = [&](size_t k) { return in.get(k);            }; // 0…p-1
+            auto r_prev = [&](size_t j) { return out.get(_L + j); }; // 1…q
+
+            /* -------- baseline:  pure delay ----------------------- */
+            float y0 = x(0);  // x[n-L]
+
+            /* -------- NN predicts residual r̂ --------------------- */
+            /* hidden layer */
+            for (size_t i = 0; i < _h; ++i) {
+                float z = s.b1[i];
+                const float* w = &s.W1[i * (_p + _q)];
+
+                /* FIR part */
+                for (size_t k = 0; k < _p; ++k) z += w[k] * x(k);
+
+                /* AR part */
+                for (size_t j = 1; j <= _q; ++j) z += w[_p + (j - 1)] * r_prev(j);
+
+                s.a[i] = std::tanh(z);
+            }
+            float r_hat = 0.f;
+            for (size_t i = 0; i < _h; ++i) r_hat += s.W2[i] * s.a[i];
+
+            /* combined prediction */
+            float y = y0 + r_hat;
+            out.push(y);                               // stores ŷ[n-L] at write-head
+
+            /* -------- error computed L ticks later --------------- */
+            float real = in.get(0);               // now x[n-L]
+            float past_pred = r_prev(0);          // out.get(_L)
+            float err = real - past_pred;         // residual error
+
+            /* clip huge spikes (saw reset) */
+            err = std::clamp(err, -1.f, 1.f);
+
+            /* variable step (optional) */
+            //float mu = std::min(4 * _mu, _mu * (1.f + 0.01f * err * err));
+
+            /* update W2 */
+            for (size_t i = 0; i < _h; ++i)         // W2
+                s.W2[i] += _mu * err * s.a[i];
+
+            for (size_t i = 0; i < _h; ++i) {        // W1 + b1
+                float delta = (s.W2[i] * err) * (1.f - s.a[i] * s.a[i]); // tanh'
+                float* w = &s.W1[i * (_p + _q)];
+
+                for (size_t k = 0; k < _p; ++k)
+                    w[k] += _mu * delta * x(k);            // FIR taps
+                for (size_t j = 1; j <= _q; ++j)
+                    w[_p + (j - 1)] += _mu * delta * r_prev(j);// AR taps
+
+                s.b1[i] += _mu * delta;
+            }
         }
     };
 
