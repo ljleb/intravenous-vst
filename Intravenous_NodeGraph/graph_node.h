@@ -52,9 +52,9 @@ struct std::hash<iv::GraphEdge> {
 };
 
 namespace iv {
-    static size_t calculate_port_buffer_size(size_t latency, size_t history) noexcept
+    static size_t calculate_port_buffer_size(size_t latency, size_t input_history, size_t output_history) noexcept
     {
-        size_t min_size = 1 + latency + history;
+        size_t min_size = 1 + latency + std::max(input_history, output_history);
         size_t pow2_size = size_t(1) << size_t(std::ceil(std::log2(min_size)));
         return pow2_size;
     };
@@ -204,7 +204,7 @@ namespace iv {
 
             LatencyAccumulator latency_accumulator;
             std::unordered_map<PortId, std::span<Sample>> input_ports_samples;
-            std::unordered_map<size_t, std::span<SharedPortData>> node_port_data;
+            std::unordered_map<size_t, std::span<SharedPortData>> node_inputs_port_data;
 
             auto allocate_node_state = [&](auto const& node, size_t node_i)
             {
@@ -227,9 +227,9 @@ namespace iv {
                 }
                 size_t const num_inputs = input_configs.size();
                 size_t const num_outputs = output_configs.size();
-                node_port_data[node_i] = allocator.allocate_array<SharedPortData>(num_inputs);
-                if (node_i != GRAPH_ID) allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(num_outputs));
                 allocator.assign(node_state.inputs, allocator.allocate_array<InputPort>(num_inputs));
+                if (node_i != GRAPH_ID) allocator.assign(node_state.outputs, allocator.allocate_array<OutputPort>(num_outputs));
+                node_inputs_port_data[node_i] = allocator.allocate_array<SharedPortData>(num_inputs);
 
                 latency_accumulator.align_latencies(node, node_i, input_configs, output_configs, target_of);
 
@@ -250,12 +250,12 @@ namespace iv {
                             : get_outputs(_nodes[output_node_i])[output_port_i];
 
                         size_t const corrected_latency = latency_accumulator.delay_input(this_input, output_config.latency);
-                        num_port_samples = calculate_port_buffer_size(corrected_latency, input_config.history);
+                        num_port_samples = calculate_port_buffer_size(corrected_latency, input_config.history, output_config.history);
                     }
                     else
                     {
                         // input is disconnected, no corresponding output port
-                        num_port_samples = calculate_port_buffer_size(0, input_config.history);
+                        num_port_samples = calculate_port_buffer_size(0, input_config.history, 0);
                     }
 
                     input_ports_samples.insert({ this_input, allocator.allocate_array<Sample>(num_port_samples) });
@@ -305,7 +305,7 @@ namespace iv {
                     }
                     size_t const num_inputs = input_configs.size();
                     size_t const num_outputs = output_configs.size();
-                    std::span<SharedPortData> inputs_port_data = node_port_data[node_i];
+                    std::span<SharedPortData> inputs_port_data = node_inputs_port_data[node_i];
 
                     for (size_t input_i = 0; input_i < num_inputs; ++input_i)
                     {
@@ -326,18 +326,22 @@ namespace iv {
                             size_t output_node_i = it->second.node;
                             size_t output_port_i = it->second.port;
 
+                            OutputConfig const& output_config = (output_node_i == GRAPH_ID)
+                                ? private_outputs_config
+                                : get_outputs(_nodes[output_node_i])[output_port_i];
+
                             OutputPort& output_port = (output_node_i == GRAPH_ID)
                                 ? allocator.at(graph_state.outputs, output_port_i)
                                 : allocator.at(allocator.at(graph_state.node_states, output_node_i).outputs, output_port_i);
 
                             size_t corrected_latency = latency_accumulator.get_input_latency(this_input);
                             allocator.construct_at(&input_port_data, port_samples, corrected_latency);
-                            allocator.construct_at(&output_port, input_port_data);
+                            allocator.construct_at(&output_port, input_port_data, output_config.history);
                         }
                         else
                         {
                             // input is disconnected: init dummy buffer
-                            allocator.construct_at(&input_port_data, port_samples, 0);
+                            allocator.construct_at(&input_port_data, port_samples, OutputConfig{}.latency);
                         }
                         allocator.construct_at(&input_port, input_port_data, input_config.history);
                     }

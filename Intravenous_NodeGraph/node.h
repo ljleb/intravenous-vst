@@ -49,13 +49,13 @@ namespace iv {
             return _shared_data.buffer[idx];
         }
 
-        __forceinline constexpr void push(Sample value) noexcept
+        __forceinline constexpr void push(Sample value) const noexcept
         {
             _shared_data.position = (_shared_data.position + 1) & (_shared_data.buffer.size() - 1);
             update(value);
         }
 
-        __forceinline constexpr void update(Sample value, size_t offset = 0) noexcept
+        __forceinline constexpr void update(Sample value, size_t offset = 0) const noexcept
         {
             if (offset > _shared_data.latency) return;
             size_t idx = (_shared_data.position + _shared_data.latency - offset) & (_shared_data.buffer.size() - 1);
@@ -75,28 +75,30 @@ namespace iv {
 
     class OutputPort {
         SharedPortData& _shared_data;
+        size_t _history;
 
     public:
-        explicit OutputPort(SharedPortData& shared_data) noexcept :
-            _shared_data(shared_data)
+        explicit OutputPort(SharedPortData& shared_data, size_t history) noexcept :
+            _shared_data(shared_data),
+            _history(history)
         {
             assert(is_power_of_2(_shared_data.buffer.size()) && "buffer size should be a power of 2");
         }
 
         __forceinline constexpr Sample get(size_t offset = 0) const noexcept
         {
-            if (offset > _shared_data.latency) return 0.0;
-            size_t idx = (_shared_data.position + offset) & (_shared_data.buffer.size() - 1);
+            if (offset > _shared_data.latency + _history) return 0.0;
+            size_t idx = (_shared_data.position + _shared_data.latency - offset) & (_shared_data.buffer.size() - 1);
             return _shared_data.buffer[idx];
         }
 
-        __forceinline constexpr void push(Sample value) noexcept
+        __forceinline constexpr void push(Sample value) const noexcept
         {
             _shared_data.position = (_shared_data.position + 1) & (_shared_data.buffer.size() - 1);
             update(value);
         }
 
-        __forceinline constexpr void update(Sample value, size_t offset = 0) noexcept
+        __forceinline constexpr void update(Sample value, size_t offset = 0) const noexcept
         {
             if (offset > _shared_data.latency) return;
             size_t idx = (_shared_data.position + _shared_data.latency - offset) & (_shared_data.buffer.size() - 1);
@@ -111,6 +113,7 @@ namespace iv {
 
     struct OutputConfig {
         size_t latency = 0;
+        size_t history = 0;
     };
 
     struct NodeState {

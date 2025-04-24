@@ -102,6 +102,16 @@ namespace iv {
         }
     };
 
+    struct DummySinkNode {
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<InputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) const noexcept
+        {}
+    };
+
     struct WarperNode {
         constexpr auto inputs() const noexcept
         {
@@ -118,10 +128,10 @@ namespace iv {
 
         void tick(TickState const& state) noexcept
         {
-            auto& in = state.inputs[0];
-            auto& in_threshold = state.inputs[1];
-            auto& out = state.outputs[0];
-            auto& out_aliased = state.outputs[1];
+            auto const& in = state.inputs[0];
+            auto const& in_threshold = state.inputs[1];
+            auto const& out = state.outputs[0];
+            auto const& out_aliased = state.outputs[1];
 
             Sample threshold = in_threshold.get();
             Sample sample_prev = out_aliased.get();
@@ -330,6 +340,98 @@ namespace iv {
             unsigned int uniform_uint = _generator(counter, _seed)[0];
             Sample uniform_float = r123::uneg11<Sample>(uniform_uint);
             out.push(uniform_float);
+        }
+    };
+
+    class LStepPredictor {
+        size_t _look_ahead;
+        size_t _order;
+        float _learning_rate;
+
+        struct State {
+            std::span<Sample> w;          // coefficient vector, length _order
+        };
+
+        template<typename Buf>
+        static State& get_state(Buf buffer) {
+            void*  obj = buffer.data();  std::size_t sz = buffer.size();
+            return *reinterpret_cast<State*>(std::align(
+                     alignof(State), sizeof(State), obj, sz));
+        }
+
+    public:
+        constexpr LStepPredictor(
+            size_t look_ahead,
+            size_t order,
+            float learning_rate = 1.f/4096.f
+        ) noexcept
+            : _look_ahead(look_ahead)
+            , _order(order)
+            , _learning_rate(learning_rate)
+        {
+            assert(_order >= _look_ahead && "window length must cover look-ahead");
+        }
+
+        auto inputs() const noexcept
+        {
+            return std::array {
+                InputConfig { .history = _look_ahead + _order - 1 }
+            };
+        }
+
+        auto outputs() const noexcept
+        {
+            return std::array {
+                OutputConfig { .history = _look_ahead } // must recall past predictions
+            };
+        }
+        
+        template<typename Alloc>
+        void init_buffer(Alloc& alloc) const
+        {
+            State& st = alloc.new_object<State>();
+            alloc.assign(st.w, alloc.new_array<float>(_order));
+            alloc.fill_n(st.w, 0.f);              // cold-start weights
+            //alloc.assign(alloc.at(st.w, _look_ahead),  1.f);
+        }
+
+        void tick(TickState const& ts) const noexcept
+        {
+            State& st = get_state(ts.buffer);
+            auto  &in  = ts.inputs[0];
+            auto  &out = ts.outputs[0];
+
+            /* ---------- form prediction y(n) ---------------------- */
+            float y = 0.f;
+            for (size_t k = 0; k < _order; ++k)
+                y += st.w[k] * in.get(_look_ahead + k);        // x(n-L-k)
+
+            /* deliver prediction this sample */
+            out.push(y);
+
+            /* ---------- LMS adaptation, executes L ticks later ---- */
+            float real = in.get(_look_ahead);                  // x(n-L)  now available
+            float past_pred = out.get(_look_ahead);            // ŷ(n-L) produced L ticks ago
+            float err = real - past_pred;
+
+            /* normalisation */
+            float norm = 1e-6f;
+            for (size_t k = 0; k < _order; ++k) {
+                float s = in.get(_look_ahead + k);
+                norm += s * s;
+            }
+            const float beta = 0.01f;/*
+            float mu_dyn = _learning_rate * (1.f + beta * err * err / norm);
+            mu_dyn = std::clamp(mu_dyn, _learning_rate, 4.f * _learning_rate);*/
+
+            float err_clip = 0.1;
+            if (fabs(err) > err_clip) err = copysign(err_clip, err);
+
+            float g = _learning_rate * err / norm;
+
+            /* w ← w + g * x_vec */
+            for (size_t k = 0; k < _order; ++k)
+                st.w[k] += g * in.get(_look_ahead + k);
         }
     };
 

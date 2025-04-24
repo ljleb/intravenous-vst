@@ -267,6 +267,8 @@ size_t iv::init_graph(
 
             auto integrator = emplace_back_id(nodes, iv::Integrator(update_frequency));
             auto warper = emplace_back_id(nodes, iv::WarperNode());
+            auto dummy_sink = emplace_back_id(nodes, iv::DummySinkNode());
+            auto predictor = emplace_back_id(nodes, iv::LStepPredictor(1, 1000, 1.f / (1 << 14)));
 
             auto frequency = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
             {
@@ -283,8 +285,11 @@ size_t iv::init_graph(
             edges.insert(iv::GraphEdge { { graph, frequency_port }, { frequency, 0 } });
 
             // main loop
-            edges.insert(iv::GraphEdge { { integrator, 0 }, { warper,     0 } });
+            edges.insert(iv::GraphEdge { { integrator, 0 }, { predictor,     0 } });
+            edges.insert(iv::GraphEdge { { predictor,     0 }, { warper,  0 } });
+            edges.insert(iv::GraphEdge { { warper,  0 }, { integrator, 0 } });
             edges.insert(iv::GraphEdge { { warper,     1 }, { integrator, 0 } });
+            edges.insert(iv::GraphEdge { { warper,     1 }, { dummy_sink, 0 } });
 
             // knobs
             edges.insert(iv::GraphEdge { { frequency, 0 },                          { integrator, 1 } });
