@@ -2,6 +2,7 @@
 #include <span>
 #include <cassert>
 #include <cstddef>
+#include <memory>
 
 
 namespace iv {
@@ -125,6 +126,7 @@ namespace iv {
     enum struct MidiMessageType {
         NOTE_ON,
         NOTE_OFF,
+        PITCH_WHEEL,
     };
 
     struct MidiMessage {
@@ -132,11 +134,17 @@ namespace iv {
         union {
             struct {
                 uint8_t note_number;
+                uint8_t channel;
                 uint8_t amplitude;
             } note_on;
             struct {
                 uint8_t note_number;
+                uint8_t channel;
             } note_off;
+            struct {
+                uint16_t pitch_value;
+                uint8_t channel;
+            } pitch_wheel;
         };
     };
 
@@ -271,5 +279,12 @@ namespace iv {
         {
             return 0;
         }
+    }
+
+    template<typename State>
+    static State& get_state(std::span<std::byte> buffer) {
+        void* ptr = buffer.data();
+        size_t space = buffer.size();
+        return *reinterpret_cast<State*>(std::align(alignof(State), sizeof(State), ptr, space));
     }
 }

@@ -6,8 +6,11 @@
 class IntravenousAudioProcessor final: public juce::AudioProcessor {
     juce::AudioProcessorValueTreeState _value_tree_state;
 
-    std::atomic<float>* _warp_threshold;
-    std::atomic<float>* _noise_level;
+    std::atomic<float>* _uniform_noise_level;
+    std::atomic<float>* _time_offset;
+    std::atomic<float>* _time_window;
+    std::atomic<float>* _gaussian_noise_ratio;
+    std::atomic<float>* _harmonics_noise_ratio;
     std::atomic<float>* _noise_low_pass;
     std::atomic<float>* _noise_high_pass;
 
@@ -16,12 +19,16 @@ class IntravenousAudioProcessor final: public juce::AudioProcessor {
     std::vector<uint8_t> _midi_buffer_sizes;
     double _update_frequency;
     size_t _song_index;
+    iv::NodeProcessor* _node_processor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntravenousAudioProcessor)
 
 public:
-    static juce::String const WARP_THRESHOLD_ID;
-    static juce::String const NOISE_LEVEL_ID;
+    static juce::String const UNIFORM_NOISE_LEVEL_ID;
+    static juce::String const TIME_WINDOW_ID;
+    static juce::String const TIME_OFFSET_ID;
+    static juce::String const GAUSSIAN_NOISE_RATIO_ID;
+    static juce::String const HARMONICS_NOISE_RATIO_ID;
     static juce::String const NOISE_LOW_PASS_ID;
     static juce::String const NOISE_HIGH_PASS_ID;
 

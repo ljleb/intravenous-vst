@@ -22,6 +22,9 @@
     <Filter Include="Header Files\random123\features">
       <UniqueIdentifier>{c3162084-244c-46e8-b52c-21a7d44c1a88}</UniqueIdentifier>
     </Filter>
+    <Filter Include="math">
+      <UniqueIdentifier>{98ddf9b4-c5c5-4640-a0b4-481b4e0aa82a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -137,6 +140,9 @@
     </ClInclude>
     <ClInclude Include="random123\features\xlcfeatures.h">
       <Filter>Header Files\random123\features</Filter>
+    </ClInclude>
+    <ClInclude Include="math\erfinv.h">
+      <Filter>math</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

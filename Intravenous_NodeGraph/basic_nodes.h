@@ -7,6 +7,7 @@
 #include "note_number_lookup_table.h"
 #include "random123/aes.h"
 #include "random123/uniform.hpp"
+#include "math/erfinv.h"
 #include <functional>
 #include <array>
 #include <optional>
@@ -14,6 +15,7 @@
 #include <vector>
 #include <memory>
 #include <cstddef>
+#include <cstring>
 
 
 namespace iv {
@@ -67,13 +69,36 @@ namespace iv {
     using SubtractNode = BinaryOpNode<std::minus<Sample>>;
     using ProductNode = BinaryOpNode<std::multiplies<Sample>>;
     using QuotientNode = BinaryOpNode<std::divides<Sample>>;
+    
+    struct PowerNode {
+        constexpr explicit PowerNode() noexcept
+        {}
 
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<InputConfig, 2>{};
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            Sample result = std::powf(state.inputs[0].get(), state.inputs[1].get());
+            state.outputs[0].push(result);
+        }
+    };
+    
     class BroadcastNode {
         size_t _num_outputs;
+        char const* _tag;
 
     public:
-        constexpr explicit BroadcastNode(size_t num_outputs) noexcept :
-            _num_outputs(num_outputs)
+        constexpr explicit BroadcastNode(size_t num_outputs, char const* tag = "") noexcept :
+            _num_outputs(num_outputs),
+            _tag(tag)
         {}
 
         constexpr auto inputs() const noexcept
@@ -91,7 +116,7 @@ namespace iv {
             return _num_outputs;
         }
 
-        constexpr void tick(TickState const& state) noexcept
+        void tick(TickState const& state) noexcept
         {
             auto& in = state.inputs[0];
             Sample sample = in.get();
@@ -115,7 +140,10 @@ namespace iv {
     struct WarperNode {
         constexpr auto inputs() const noexcept
         {
-            return std::array<InputConfig, 2>{};
+            return std::array {
+                InputConfig{},
+                InputConfig { .default_value = 1.0 },
+            };
         }
 
         constexpr auto outputs() const noexcept
@@ -134,13 +162,14 @@ namespace iv {
             auto const& out_aliased = state.outputs[1];
 
             Sample threshold = in_threshold.get();
-            Sample sample_prev = out_aliased.get();
-            Sample sample = in.get();
+            Sample sample_prev = std::fmin(std::fmax(out_aliased.get(), -1.0), 1.0);
+            Sample sample = std::fmin(std::fmax(in.get(), -1.0), 1.0);
             Sample sample_warped = sample;
             bool warped = false;
 
             if (sample > threshold) { sample_warped = warp_pm1(sample, threshold); warped = true; }
             else if (sample < -threshold) { sample_warped = warp_pm1(sample, threshold); warped = true; }
+            sample_warped = std::fmin(std::fmax(sample_warped, -1.0), 1.0);
             out_aliased.push(sample_warped);
 
             Sample sample_warped_aa = sample_warped;
@@ -149,10 +178,10 @@ namespace iv {
                 out.update(sample_prev - polyblep_error(sample_prev, delta, threshold, PolyblepSide::LEFT));
                 sample_warped_aa -= polyblep_error(sample_warped_aa, delta, threshold, PolyblepSide::RIGHT);
             }
-            out.push(sample_warped_aa);
+            out.push(std::fmin(std::fmax(sample_warped_aa, -1.0), 1.0));
         }
     };
-
+    
     class Integrator {
         double const* _update_frequency;
 
@@ -163,7 +192,11 @@ namespace iv {
 
         constexpr auto inputs() const noexcept
         {
-            return std::array<iv::InputConfig, 2>{};
+            return std::array<iv::InputConfig, 3>{
+                InputConfig{},
+                InputConfig{},
+                InputConfig { .default_value = 0.0 },
+            };
         }
 
         constexpr auto outputs() const noexcept
@@ -173,10 +206,46 @@ namespace iv {
 
         void tick(iv::TickState const& state) noexcept
         {
+            auto& out = state.outputs[0];
+            auto const& reset = state.inputs[2].get();
+            if (reset)
+            {
+                out.push(0.0);
+                return;
+            }
+
             auto const& f_prev = state.inputs[0].get();
             auto const& f = state.inputs[1].get();
             auto const& dx = *_update_frequency;
-            state.outputs[0].push(f_prev + f * dx);
+            out.push(warp_pm1(f_prev + f * dx, 1.0));
+        }
+    };
+
+    class Latency {
+        size_t _latency;
+
+    public:
+        constexpr explicit Latency(size_t latency = 1) noexcept :
+            _latency(latency)
+        {}
+
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<iv::InputConfig, 1>{};
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array{
+                iv::OutputConfig { .latency = _latency },
+            };
+        }
+
+        void tick(iv::TickState const& state) noexcept
+        {
+            auto const& in = state.inputs[0];
+            auto const& out = state.outputs[0];
+            out.push(in.get());
         }
     };
 
@@ -258,7 +327,7 @@ namespace iv {
 
     public:
         constexpr explicit DeterministicUniformNoiseNode(
-            Sample min = -1.0,
+            Sample min = 0.0,
             Sample max = 1.0,
             std::optional<Sample> seed = {}
         ) noexcept :
@@ -338,36 +407,230 @@ namespace iv {
             auto& out = state.outputs[0];
             Rng::ctr_type counter = make_index(state.index);
             unsigned int uniform_uint = _generator(counter, _seed)[0];
-            Sample uniform_float = r123::uneg11<Sample>(uniform_uint);
+            Sample uniform_float = r123::u01<Sample>(uniform_uint) * (_max - _min) + _min;
             out.push(uniform_float);
         }
     };
 
-    class NlmsFuturePredictor {
+    class UniformToCauchyNode {
+        Sample _x0;
+        Sample _gamma;
+
+    public:
+        explicit UniformToCauchyNode(
+            Sample x0 = 1.0,
+            Sample gamma = 1.0
+        ) noexcept :
+            _x0(x0),
+            _gamma(gamma)
+        {}
+
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<InputConfig, 1>{};
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            auto& in = state.inputs[0];
+            auto& out = state.outputs[0];
+            Sample uniform = in.get();
+            uniform = uniform * uniform * uniform;
+            Sample cauchy = _x0 + _gamma * std::tanf(std::numbers::pi_v<float> * uniform * 0.5);
+            out.push(cauchy);
+        }
+    };
+    
+    class UniformToPowerNode {
+        ptrdiff_t _min;
+        ptrdiff_t _max;
+        Sample _lambda;
+
+        struct State {
+            std::span<Sample> weights;
+        };
+
+    public:
+        explicit UniformToPowerNode(
+            ptrdiff_t min = -5,
+            ptrdiff_t max = 4,
+            Sample lambda = 0.5
+        ) noexcept :
+            _min(min),
+            _max(max),
+            _lambda(lambda)
+        {}
+
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<InputConfig, 1>{};
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        template<typename A>
+        void init_buffer(A& alloc) const
+        {
+            State& s = alloc.new_object<State>();
+            size_t range = std::max<ptrdiff_t>(0, _max - _min);
+            alloc.assign(s.weights, alloc.new_array<Sample>(range));
+            for (ptrdiff_t i = 0; i < range; ++i)
+            {
+                alloc.assign(alloc.at(s.weights, i), std::powf(_lambda, range - 1 - static_cast<ptrdiff_t>(i)));
+            }
+            if (alloc.can_allocate())
+            {
+                Sample total = 0.0;
+                for (size_t i = 0; i < range; ++i)
+                {
+                    total += s.weights[i];
+                }
+                for (size_t i = 0; i < range; ++i)
+                {
+                    s.weights[i] /= total;
+                }
+            }
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            auto& in = state.inputs[0];
+            auto& out = state.outputs[0];
+            auto& s = get_state<State>(state.buffer);
+            Sample uniform = in.get() * 0.5 + 0.5;
+            size_t discrete = static_cast<size_t>(std::lower_bound(s.weights.begin(), s.weights.end(), uniform) - s.weights.begin());
+            out.push(std::exp2f(static_cast<Sample>(discrete)));
+        }
+    };
+
+    class UniformToGaussianNode {
+        Sample _mean;
+        Sample _std;
+
+    public:
+        explicit UniformToGaussianNode(
+            Sample mean = 0.0,
+            Sample std = 1.0
+        ) noexcept :
+            _mean(mean),
+            _std(std)
+        {
+        }
+
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<InputConfig, 1>{};
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            auto& in = state.inputs[0];
+            auto& out = state.outputs[0];
+            Sample uniform = in.get();
+            Sample normal = std::numbers::sqrt2_v<float> * erfinvf(uniform);
+            Sample gaussian = std::fmaf(normal, _std, _mean);
+            out.push(gaussian);
+        }
+    };
+
+    class DeterministicGaussianAESNoiseNode {
+        using Rng = r123::AESNI4x32;
+        Rng _generator;
+        Rng::key_type _seed;
+        Sample _mean;
+        Sample _std;
+
+        static Rng::key_type make_seed(std::optional<uint64_t> seed_opt)
+        {
+            uint32_t seed_low, seed_high;
+            if (seed_opt.has_value())
+            {
+                uint64_t seed = *seed_opt;
+                seed_low = static_cast<uint32_t>(seed);
+                seed_high = static_cast<uint32_t>(seed >> 32);
+            }
+            else
+            {
+                seed_low = std::random_device{}();
+                seed_high = std::random_device{}();
+            }
+            return Rng::ukey_type{ seed_low, seed_high, 0, 0 };
+        }
+
+        static Rng::ctr_type make_index(uint64_t index)
+        {
+            return {
+                static_cast<uint32_t>(index),
+                static_cast<uint32_t>(index >> 32),
+                0,
+                0,
+            };
+        }
+
+    public:
+        explicit DeterministicGaussianAESNoiseNode(
+            Sample mean = 0.0,
+            Sample std = 1.0,
+            std::optional<uint64_t> seed = {}
+        ) noexcept :
+            _seed(make_seed(seed)),
+            _mean(mean),
+            _std(std)
+        {
+            assert(haveAESNI() && "This machine does not have the AES-NI instruction set, use a different noise node.");
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            auto& out = state.outputs[0];
+            Rng::ctr_type counter = make_index(state.index);
+            unsigned int uniform_uint = _generator(counter, _seed)[0];
+            Sample uniform = r123::uneg11<Sample>(uniform_uint);
+            Sample gaussian = std::numbers::sqrt2_v<float> * erfinvf(uniform);
+            gaussian = std::fmaf(gaussian, _std, _mean);
+            out.push(gaussian);
+        }
+    };
+
+    class NlmsPredictor {
         size_t _look_ahead;
         size_t _order;
         float _lr;
+        float _decay;
 
         struct State {
             std::span<Sample> w;
         };
 
-        template<typename Buf>
-        static State& get_state(Buf buffer) {
-            void*  obj = buffer.data();  std::size_t sz = buffer.size();
-            return *reinterpret_cast<State*>(std::align(
-                     alignof(State), sizeof(State), obj, sz));
-        }
-
     public:
-        constexpr NlmsFuturePredictor(
+        constexpr NlmsPredictor(
             size_t look_ahead,
             size_t order,
-            float lr = 1e-4
+            float lr = 1e-4,
+            float decay = 1.0
         ) noexcept
             : _look_ahead(look_ahead)
             , _order(order)
             , _lr(lr)
+            , _decay(decay)
         {
             assert(_order >= _look_ahead && "window length must cover look-ahead");
         }
@@ -397,7 +660,7 @@ namespace iv {
 
         void tick(TickState const& ts) const noexcept
         {
-            State& st = get_state(ts.buffer);
+            State& st = get_state<State>(ts.buffer);
             auto  &in  = ts.inputs[0];
             auto  &out = ts.outputs[0];
 
@@ -431,7 +694,7 @@ namespace iv {
 
             /* w ← w + g * x_vec */
             for (size_t k = 0; k < _order; ++k)
-                st.w[k] += g * in.get(k);
+                st.w[k] = st.w[k] * _decay + g * in.get(k);
         }
     };
 
@@ -448,13 +711,6 @@ namespace iv {
             std::span<float> b1;
             std::span<float> a;    // scratch h
         };
-
-        template<typename Buf>
-        static State& get_state(Buf buffer) {
-            void* obj = buffer.data();  std::size_t sz = buffer.size();
-            return *reinterpret_cast<State*>(std::align(
-                alignof(State), sizeof(State), obj, sz));
-        }
 
     public:
         constexpr TanhResidualPredictor(
@@ -499,7 +755,7 @@ namespace iv {
 
         void tick(TickState const& ts) const noexcept
         {
-            State& s = get_state(ts.buffer);
+            State& s = get_state<State>(ts.buffer);
             auto& in = ts.inputs[0];
             auto& out = ts.outputs[0];
 
@@ -536,7 +792,7 @@ namespace iv {
             float err = real - past_pred;         // residual error
 
             /* clip huge spikes (saw reset) */
-            err = std::clamp(err, -1.f, 1.f);
+            //err = std::clamp(err, -1.f, 1.f);
 
             /* variable step (optional) */
             //float mu = std::min(4 * _mu, _mu * (1.f + 0.01f * err * err));
@@ -555,6 +811,245 @@ namespace iv {
                     w[_p + (j - 1)] += _mu * delta * r_prev(j);// AR taps
 
                 s.b1[i] += _mu * delta;
+            }
+        }
+    };
+
+    class TanhResidualAR2Predictor {
+        size_t _L;               // look-ahead
+        size_t _p;               // FIR taps
+        size_t _q;               // AR taps
+        size_t _h1, _h2;         // hidden-layer sizes
+        float  _mu;              // learning rate
+
+        struct State {
+            std::span<float> W1, b1;      // h1 × (p+q)   , h1
+            std::span<float> W2, b2;      // h2 × h1      , h2
+            std::span<float> W3;          // h2
+            std::span<float> a1, a2;      // scratch: h1 , h2
+        };
+
+        template<typename Buf>
+        static State& st(Buf b) {
+            void* o = b.data(); size_t s = b.size();
+            return *reinterpret_cast<State*>(std::align(
+                alignof(State), sizeof(State), o, s));
+        }
+
+    public:
+        constexpr TanhResidualAR2Predictor(size_t  look_ahead,
+            size_t  order,
+            size_t  ar_order = 2,
+            size_t  hidden1 = 16,
+            size_t  hidden2 = 8,
+            float   mu = 2e-6f) noexcept
+            : _L(look_ahead), _p(order), _q(ar_order),
+            _h1(hidden1), _h2(hidden2), _mu(mu)
+        {
+            assert(_p >= _L);
+        }
+
+        /* ───── graph meta-data ───── */
+        auto inputs()  const noexcept {
+            return std::array{
+                InputConfig{.history = _p - 1 }
+            };
+        }
+        auto outputs() const noexcept {
+            return std::array{
+                OutputConfig{.latency = 0, .history = _L + _q }
+            };
+        }
+
+        /* ───── buffer reservation ───── */
+        template<typename A>
+        void init_buffer(A& alloc) const
+        {
+            State& s = alloc.new_object<State>();
+
+            alloc.assign(s.W1, alloc.new_array<float>(_h1 * (_p + _q)));
+            alloc.assign(s.b1, alloc.new_array<float>(_h1));
+
+            alloc.assign(s.W2, alloc.new_array<float>(_h2 * _h1));
+            alloc.assign(s.b2, alloc.new_array<float>(_h2));
+
+            alloc.assign(s.W3, alloc.new_array<float>(_h2));
+
+            alloc.assign(s.a1, alloc.new_array<float>(_h1));
+            alloc.assign(s.a2, alloc.new_array<float>(_h2));
+
+            alloc.fill_n(s.W1, 0.f); alloc.fill_n(s.W2, 0.f); alloc.fill_n(s.W3, 0.f);
+            alloc.fill_n(s.b1, 0.f); alloc.fill_n(s.b2, 0.f);
+        }
+
+        /* ───── processing ───── */
+        void tick(TickState const& ts) const noexcept
+        {
+            State& s = st(ts.buffer);
+            auto& in = ts.inputs[0];
+            auto& out = ts.outputs[0];
+
+            auto x = [&](size_t k) { return in.get(k); };           // 0…p-1
+            auto r_p = [&](size_t j) { return out.get(_L + j); };     // 1…q
+
+            /* 1. baseline delay */
+            float y0 = x(0);                                  // x[n-L]
+
+            /* 2. hidden layer 1 */
+            for (size_t i = 0; i < _h1; ++i) {
+                float z = s.b1[i];
+                const float* w = &s.W1[i * (_p + _q)];
+                for (size_t k = 0; k < _p; ++k)      z += w[k] * x(k);
+                for (size_t j = 0; j < _q; ++j)     z += w[_p + j] * r_p(j + 1);
+                s.a1[i] = std::tanh(z);
+            }
+
+            /* 3. hidden layer 2 */
+            for (size_t i = 0; i < _h2; ++i) {
+                float z = s.b2[i];
+                const float* w = &s.W2[i * _h1];
+                for (size_t k = 0; k < _h1; ++k) z += w[k] * s.a1[k];
+                s.a2[i] = std::tanh(z);
+            }
+
+            /* 4. linear read-out (no bias) */
+            float r_hat = 0.f;
+            for (size_t i = 0; i < _h2; ++i) r_hat += s.W3[i] * s.a2[i];
+
+            float y = y0 + r_hat;
+            out.push(y);                           // ŷ[n-L]
+
+            /* 5. error for sample x[n-L] */
+            float real = x(0);
+            float past_pred = r_p(0);              // out.get(_L)
+            float err = std::clamp(real - past_pred, -1.f, 1.f);
+
+            /* 6. update W3 */
+            for (size_t i = 0; i < _h2; ++i)
+                s.W3[i] += _mu * err * s.a2[i];
+
+            /* 7. back-prop layer 2 */
+            for (size_t i = 0; i < _h2; ++i) {
+                float delta2 = (s.W3[i] * err) * (1.f - s.a2[i] * s.a2[i]);   // tanh'
+                float* w2 = &s.W2[i * _h1];
+                for (size_t k = 0; k < _h1; ++k)
+                    w2[k] += _mu * delta2 * s.a1[k];
+                s.b2[i] += _mu * delta2;
+
+                /* stash delta2 in a2 for layer-1 back-prop reuse */
+                s.a2[i] = delta2;
+            }
+
+            /* 8. back-prop layer 1 */
+            for (size_t k1 = 0; k1 < _h1; ++k1) {
+                float sum = 0.f;
+                for (size_t i = 0; i < _h2; ++i)
+                    sum += s.W2[i * _h1 + k1] * s.a2[i];   // a2 now holds delta2
+                float delta1 = sum * (1.f - s.a1[k1] * s.a1[k1]);
+                float* w1 = &s.W1[k1];                   // stride (_p+_q)
+
+                for (size_t k = 0; k < _p; ++k)
+                    w1[k] += _mu * delta1 * x(k);
+                for (size_t j = 0; j < _q; ++j)
+                    w1[_p + j] += _mu * delta1 * r_p(j + 1);
+
+                s.b1[k1] += _mu * delta1;
+            }
+        }
+    };
+
+    class PolyResidualPredictor {
+        size_t _L;              // look-ahead still on edge
+        size_t _p;              // window length
+        float  _mu;             // learning rate
+
+        struct State {
+            std::span<float> w;         // length 2·p   [w_lin | w_quad]
+        };
+
+        template<typename Buf>
+        static State& st(Buf b) {
+            void* o = b.data(); size_t s = b.size();
+            return *reinterpret_cast<State*>(std::align(
+                alignof(State), sizeof(State), o, s));
+        }
+
+    public:
+        constexpr PolyResidualPredictor(size_t look_ahead,
+            size_t order,
+            float  mu = 1e-5f
+        ) noexcept
+            : _L(look_ahead)
+            , _p(order)
+            , _mu(mu)
+        {
+            assert(_p >= _L);
+        }
+
+        /* ─── meta-data ─── */
+        auto inputs()  const noexcept {
+            return std::array {
+                InputConfig {.history = _p - 1 },
+            };
+        }
+        auto outputs() const noexcept {
+            return std::array {
+                OutputConfig { .history = _L },
+            };
+        }
+
+        /* ─── allocation ─── */
+        template<typename A>
+        void init_buffer(A& alloc) const
+        {
+            State& s = alloc.new_object<State>();
+            alloc.assign(s.w, alloc.new_array<float>(2 * _p));
+            alloc.fill_n(s.w, 0.f);
+        }
+
+        /* ─── processing ─── */
+        void tick(TickState const& ts) const noexcept
+        {
+            State& s = st(ts.buffer);
+            auto& in = ts.inputs[0];
+            auto& out = ts.outputs[0];
+
+            auto x = [&](size_t k) { return in.get(k); };   // x[n-L-k]
+
+            /* baseline delay */
+            float y0 = x(0);
+
+            /* ---- forward: linear + quad terms ------------------- */
+            float r_hat = 0.f;
+            for (size_t k = 0; k < _p; ++k) {
+                float xk = x(k);
+                float* wk = &s.w[2 * k];          // w_lin , w_quad
+                r_hat += wk[0] * xk + wk[1] * xk * xk;
+            }
+
+            float y = y0 + r_hat;
+            out.push(y);                        // ŷ[n-L]
+
+            /* ---- error for sample x[n-L] ------------------------ */
+            float real = x(0);
+            float past_pred = out.get(_L);      // ŷ[n-L] made L ticks ago
+            float err = std::clamp(real - past_pred, -1.f, 1.f);
+
+            /* ---- norm for NLMS (include quad term magnitude) ---- */
+            float norm = 1e-6f;
+            for (size_t k = 0; k < _p; ++k) {
+                float xk = x(k);
+                norm += xk * xk + (xk * xk) * (xk * xk);   // |[x, x²]|²
+            }
+
+            float g = _mu * err / norm;
+
+            /* ---- weight update ---------------------------------- */
+            for (size_t k = 0; k < _p; ++k) {
+                float xk = x(k);
+                float* wk = &s.w[2 * k];
+                wk[0] += g * xk;          // linear term
+                wk[1] += g * xk * xk;     // quadratic term
             }
         }
     };
@@ -612,6 +1107,27 @@ namespace iv {
         void tick(TickState const& state) noexcept
         {
             _tick_fn(_node.get(), state);
+        }
+    };
+    
+    struct InterpolationNode {
+        constexpr auto inputs() const noexcept
+        {
+            return std::array<InputConfig, 3>{};
+        }
+
+        constexpr auto outputs() const noexcept
+        {
+            return std::array<OutputConfig, 1>{};
+        }
+
+        void tick(TickState const& state) noexcept
+        {
+            Sample a = state.inputs[0].get();
+            Sample b = state.inputs[1].get();
+            Sample alpha = state.inputs[2].get();
+            auto& out = state.outputs[0];
+            out.push(a + alpha*(b-a));
         }
     };
 }

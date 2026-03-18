@@ -142,6 +142,7 @@ namespace iv {
             _num_public_outputs(num_outputs)
         {
             expand_hyperedge_ports();
+            stub_dangling_ports();
             sort_nodes();
             validate_graph();
         }
@@ -510,6 +511,27 @@ namespace iv {
             }
         }
 
+        void stub_dangling_ports()
+        {
+            auto [source_of, target_of] = make_source_target_edge_maps();
+            size_t const num_nodes = _nodes.size();
+            for (size_t node_id = 0; node_id < num_nodes + 1; ++node_id)
+            {
+                size_t const node = (node_id == num_nodes) ? GRAPH_ID : node_id;
+                size_t const num_ouputs = (node == GRAPH_ID) ? _num_public_inputs : get_num_outputs(_nodes[node]);
+                for (size_t output_port = 0; output_port < num_ouputs; ++output_port)
+                {
+                    PortId const this_port { node, output_port };
+                    if (auto it = target_of.find(this_port); it == target_of.end())
+                    {
+                        _nodes.emplace_back(DummySinkNode());
+                        size_t const new_node = _nodes.size() - 1;
+                        _edges.insert(GraphEdge { this_port, { new_node, 0 } });
+                    }
+                }
+            }
+        }
+
         std::deque<size_t> find_source_nodes(
             std::unordered_map<PortId, PortId> const& source_of,
             std::unordered_map<PortId, PortId> const& target_of) const
@@ -762,6 +784,11 @@ namespace iv {
                 _buffer.size() * sizeof(AlignedBytes)
             };
             _node.tick({ NodeState {.buffer = buffer_span }, midi, index });
+        }
+
+        size_t get_latency() const noexcept
+        {
+            return _node.internal_latency();
         }
     };
 }

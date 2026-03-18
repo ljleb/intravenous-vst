@@ -6,8 +6,11 @@ IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudi
     _audio_processor(audio_processor)
 {
     for (auto const& parameter_identifier: {
-        IntravenousAudioProcessor::WARP_THRESHOLD_ID,
-        IntravenousAudioProcessor::NOISE_LEVEL_ID,
+        IntravenousAudioProcessor::UNIFORM_NOISE_LEVEL_ID,
+        IntravenousAudioProcessor::TIME_WINDOW_ID,
+        IntravenousAudioProcessor::TIME_OFFSET_ID,
+        IntravenousAudioProcessor::GAUSSIAN_NOISE_RATIO_ID,
+        IntravenousAudioProcessor::HARMONICS_NOISE_RATIO_ID,
         IntravenousAudioProcessor::NOISE_LOW_PASS_ID,
         IntravenousAudioProcessor::NOISE_HIGH_PASS_ID,
     }) {

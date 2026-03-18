@@ -157,6 +157,7 @@
     <ClInclude Include="fast_bitset.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="graph_node.h" />
+    <ClInclude Include="math\erfinv.h" />
     <ClInclude Include="midi_node.h" />
     <ClInclude Include="node.h" />
     <ClInclude Include="note_number_lookup_table.h" />
