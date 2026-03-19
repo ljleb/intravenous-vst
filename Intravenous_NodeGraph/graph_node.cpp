@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "public.h"
+#include "dsl.h"
 #include "midi_node.h"
 #include "graph_node.h"
 #include <any>
