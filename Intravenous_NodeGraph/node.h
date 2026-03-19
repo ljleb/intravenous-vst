@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstddef>
 #include <memory>
+#include <string_view>
 
 
 namespace iv {
@@ -108,11 +109,13 @@ namespace iv {
     };
 
     struct InputConfig {
+        std::string_view name {};
         size_t history = 0;
         Sample default_value = 0.0;
     };
 
     struct OutputConfig {
+        std::string_view name {};
         size_t latency = 0;
         size_t history = 0;
     };

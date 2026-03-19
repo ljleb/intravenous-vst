@@ -119,8 +119,8 @@ namespace iv {
 
         Nodes _nodes;
         Edges _edges;
-        size_t _num_public_inputs;
-        size_t _num_public_outputs;
+        std::vector<InputConfig> _public_inputs;
+        std::vector<OutputConfig> _public_outputs;
 
         auto make_source_target_edge_maps() const
         {
@@ -135,11 +135,12 @@ namespace iv {
         }
 
     public:
-        explicit GraphNode(Nodes nodes, Edges edges, size_t num_inputs = 0, size_t num_outputs = 0) :
+        template<class Is, class Os>
+        explicit GraphNode(Nodes nodes, Edges edges, Is&& inputs, Os&& outputs) :
             _nodes(std::move(nodes)),
             _edges(std::move(edges)),
-            _num_public_inputs(num_inputs),
-            _num_public_outputs(num_outputs)
+            _public_inputs(std::cbegin(inputs), std::cend(inputs)),
+            _public_outputs(std::cbegin(outputs), std::cend(outputs))
         {
             expand_hyperedge_ports();
             stub_dangling_ports();
@@ -149,22 +150,22 @@ namespace iv {
 
         constexpr auto inputs() const noexcept
         {
-            return std::vector<InputConfig>(_num_public_inputs);
+            return _public_inputs;
         }
 
         constexpr auto outputs() const noexcept
         {
-            return std::vector<OutputConfig>(_num_public_outputs);
+            return _public_outputs;
         }
 
         constexpr auto num_inputs() const noexcept
         {
-            return _num_public_inputs;
+            return _public_inputs.size();
         }
 
         constexpr auto num_outputs() const noexcept
         {
-            return _num_public_outputs;
+            return _public_outputs.size();
         }
 
         template<typename Allocator>
@@ -194,12 +195,12 @@ namespace iv {
 
             size_t num_nodes = _nodes.size();
 
-            std::vector<InputConfig> private_input_configs(_num_public_outputs);
+            std::vector<InputConfig> private_input_configs(num_outputs());
             OutputConfig private_outputs_config;
 
             GraphState& graph_state = allocator.new_object<GraphState>();
             allocator.assign(graph_state.node_states, allocator.new_array<NodeState>(num_nodes));
-            allocator.assign(graph_state.outputs, allocator.allocate_array<OutputPort>(_num_public_inputs));
+            allocator.assign(graph_state.outputs, allocator.allocate_array<OutputPort>(num_inputs()));
 
             auto [source_of, target_of] = make_source_target_edge_maps();
 
@@ -372,7 +373,7 @@ namespace iv {
         void tick(TickState const& state) noexcept
         {
             auto& private_state = get_private_state(state.buffer);
-            for (size_t i = 0; i < _num_public_inputs; ++i) {
+            for (size_t i = 0; i < num_inputs(); ++i) {
                 private_state.outputs[i].push(state.inputs[i].get());
             }
             size_t num_nodes = _nodes.size();
@@ -384,7 +385,7 @@ namespace iv {
                     state.index
                 });
             }
-            for (size_t i = 0; i < _num_public_outputs; ++i) {
+            for (size_t i = 0; i < num_outputs(); ++i) {
                 state.outputs[i].push(private_state.inputs[i].get());
             }
         }
@@ -411,7 +412,7 @@ namespace iv {
                 {
                     size_t node_global_latency = 0;
 
-                    size_t const num_inputs = (node_i != GRAPH_ID) ? get_num_inputs(node) : _num_public_outputs;
+                    size_t const num_inputs = (node_i != GRAPH_ID) ? get_num_inputs(node) : num_outputs();
                     for (size_t input_port = 0; input_port < num_inputs; ++input_port)
                     {
                         node_global_latency = std::max(node_global_latency, input_global_latencies[{ node_i, input_port }]);
@@ -518,7 +519,7 @@ namespace iv {
             for (size_t node_id = 0; node_id < num_nodes + 1; ++node_id)
             {
                 size_t const node = (node_id == num_nodes) ? GRAPH_ID : node_id;
-                size_t const num_ouputs = (node == GRAPH_ID) ? _num_public_inputs : get_num_outputs(_nodes[node]);
+                size_t const num_ouputs = (node == GRAPH_ID) ? num_inputs() : get_num_outputs(_nodes[node]);
                 for (size_t output_port = 0; output_port < num_ouputs; ++output_port)
                 {
                     PortId const this_port { node, output_port };
@@ -720,11 +721,11 @@ namespace iv {
             for (auto const& edge : _edges)
             {
                 size_t source_num_outputs = (edge.source.node == GRAPH_ID)
-                    ? _num_public_inputs  // number of private outputs
+                    ? num_inputs()  // number of private outputs
                     : get_num_outputs(_nodes[edge.source.node]);
 
                 size_t target_num_inputs = (edge.target.node == GRAPH_ID)
-                    ? _num_public_outputs  // number of private inputs
+                    ? num_outputs()  // number of private inputs
                     : get_num_inputs(_nodes[edge.target.node]);
 
                 assert(edge.source.port < source_num_outputs && "bad connection: source output port out of range");
@@ -757,8 +758,8 @@ namespace iv {
         {
             FixedBufferAllocator allocator({
                 reinterpret_cast<std::byte*>(_buffer.data()),
-                _buffer.size() * sizeof(AlignedBytes)
-                });
+                _buffer.size() * sizeof(AlignedBytes),
+            });
             auto allocated = do_init_buffer(_node, allocator);
             assert(
                 _buffer.size() - allocated.size() < alignof(max_align_t) &&

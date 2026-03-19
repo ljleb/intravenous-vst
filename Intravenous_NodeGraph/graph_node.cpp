@@ -172,14 +172,16 @@ public:
     constexpr auto inputs() const noexcept
     {
         return std::array {
-            iv::InputConfig { .history = 1 },
-            iv::InputConfig{},
+            iv::InputConfig { .name = "in", .history=1 },
+            iv::InputConfig { .name = "cutoff" },
         };
     }
 
     constexpr auto outputs() const noexcept
     {
-        return std::array<iv::OutputConfig, 1>{};
+        return std::array {
+            iv::OutputConfig { "out" },
+        };
     }
 
     void tick(iv::TickState const& state) const noexcept
@@ -267,7 +269,10 @@ iv::NodeProcessor* iv::init_graph(
                 edges.insert(iv::GraphEdge { { u_to_c,       0 }, { interp,  1 } });
                 edges.insert(iv::GraphEdge { { u_to_n_knob,  0 }, { interp,  2 } });
 
-                return std::make_tuple(0, 1);
+                return std::make_tuple(
+                    std::array<InputConfig, 0>{},
+                    std::array<OutputConfig, 1>{}
+                );
             });
         }
 
@@ -292,20 +297,23 @@ iv::NodeProcessor* iv::init_graph(
             auto frequency = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
             {
                 auto product = emplace_back_id(nodes, iv::ProductNode());
-                auto constant = emplace_back_id(nodes, iv::ConstantNode(4.0));
+                auto constant = emplace_back_id(nodes, iv::ConstantNode(2.0));
 
                 edges.insert(iv::GraphEdge { { graph,    0 }, { product, 0 } });
                 edges.insert(iv::GraphEdge { { constant, 0 }, { product, 1 } });
                 edges.insert(iv::GraphEdge { { product,  0 }, { graph,   0 } });
 
-                return std::make_tuple(1, 1);
+                return std::make_tuple(
+                    std::array<InputConfig, 1>{},
+                    std::array<OutputConfig, 1>{}
+                );
             });
             
             /*auto noise = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
             {
                 auto product = emplace_back_id(nodes, iv::ProductNode());
                 auto product2 = emplace_back_id(nodes, iv::ProductNode());
-                auto constant = emplace_back_id(nodes, iv::ConstantNode(1 / 440.0 / 4.0));
+                auto constant = emplace_back_id(nodes, iv::ConstantNode(1 / 440.0 / 2.0));
 
                 edges.insert(iv::GraphEdge { { graph,    0 }, { product,  0 } });
                 edges.insert(iv::GraphEdge { { graph,    1 }, { product,  1 } });
@@ -334,7 +342,7 @@ iv::NodeProcessor* iv::init_graph(
             //edges.insert(iv::GraphEdge { { integrator, 0 }, { predictor,  0 } });
             //edges.insert(iv::GraphEdge { { integrator, 0 }, { lo_pass,    0 } });
             //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { predictor,  0 } });
-            
+
             //edges.insert(iv::GraphEdge { { predictor,  0 }, { warper,     0 } });
             edges.insert(iv::GraphEdge { { integrator, 0 }, { warper,     0 } });
             //edges.insert(iv::GraphEdge { { warper,     1 }, { lo_pass,    0 } });
@@ -358,7 +366,10 @@ iv::NodeProcessor* iv::init_graph(
             edges.insert(iv::GraphEdge { { warper,    0 },              { amplitude, 1 } });
             edges.insert(iv::GraphEdge { { amplitude, 0 },              { graph,     0 } });
 
-            return std::make_tuple(4, 1);
+            return std::make_tuple(
+                std::array<InputConfig, 4>{},
+                std::array<OutputConfig, 1>{}
+            );
         });
 
         auto midi_left = emplace_back_id(nodes, iv::MidiNode(midi_voice));
@@ -380,7 +391,10 @@ iv::NodeProcessor* iv::init_graph(
         edges.insert(iv::GraphEdge { { midi_left,  0 }, { left_out,  0 } });
         edges.insert(iv::GraphEdge { { midi_right, 0 }, { right_out, 0 } });
 
-        return std::make_tuple(0, 0);
+        return std::make_tuple(
+            std::array<InputConfig, 0>{},
+            std::array<OutputConfig, 0>{}
+        );
     });
 
     size_t const latency = iv::get_internal_latency(graph);

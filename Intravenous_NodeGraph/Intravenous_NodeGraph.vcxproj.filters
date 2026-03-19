@@ -144,6 +144,9 @@
     <ClInclude Include="math\erfinv.h">
       <Filter>math</Filter>
     </ClInclude>
+    <ClInclude Include="dsl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">

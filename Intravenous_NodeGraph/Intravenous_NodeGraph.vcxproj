@@ -154,6 +154,7 @@
   <ItemGroup>
     <ClInclude Include="alligator.h" />
     <ClInclude Include="basic_nodes.h" />
+    <ClInclude Include="dsl.h" />
     <ClInclude Include="fast_bitset.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="graph_node.h" />

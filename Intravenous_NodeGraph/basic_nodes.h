@@ -90,7 +90,7 @@ namespace iv {
             state.outputs[0].push(result);
         }
     };
-    
+
     class BroadcastNode {
         size_t _num_outputs;
         char const* _tag;
@@ -141,16 +141,16 @@ namespace iv {
         constexpr auto inputs() const noexcept
         {
             return std::array {
-                InputConfig{},
-                InputConfig { .default_value = 1.0 },
+                InputConfig { .name = "in" },
+                InputConfig { .name = "threshold", .default_value = 1.0 },
             };
         }
 
         constexpr auto outputs() const noexcept
         {
             return std::array {
-                OutputConfig { .latency = 1 },
-                OutputConfig{},
+                OutputConfig { .name = "out", .latency = 1 },
+                OutputConfig { .name = "aliased" },
             };
         }
 
@@ -181,7 +181,7 @@ namespace iv {
             out.push(std::fmin(std::fmax(sample_warped_aa, -1.0), 1.0));
         }
     };
-    
+
     class Integrator {
         double const* _update_frequency;
 
@@ -1113,12 +1113,18 @@ namespace iv {
     struct InterpolationNode {
         constexpr auto inputs() const noexcept
         {
-            return std::array<InputConfig, 3>{};
+            return std::array{
+                InputConfig { "a" },
+                InputConfig { "b" },
+                InputConfig { "alpha" },
+            };
         }
 
         constexpr auto outputs() const noexcept
         {
-            return std::array<OutputConfig, 1>{};
+            return std::array {
+                OutputConfig { "out" },
+            };
         }
 
         void tick(TickState const& state) noexcept

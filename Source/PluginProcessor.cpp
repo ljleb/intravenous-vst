@@ -126,11 +126,11 @@ void IntravenousAudioProcessor::changeProgramName(int index, const juce::String&
 }
 
 void IntravenousAudioProcessor::prepareToPlay(double sample_rate, int samples_per_block) {
+    if (_node_processor) iv::free_graph(_node_processor);
     _update_frequency = 1.0 / sample_rate;
     _midi_buffers.resize(samples_per_block);
     _midi_buffer_sizes.resize(samples_per_block, 0);
     _midi_buffers.shrink_to_fit();
-    if (_node_processor) iv::free_graph(_node_processor);
     _node_processor = iv::init_graph(
         &_update_frequency,
         _channels,
