@@ -3,8 +3,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
-class IntravenousAudioProcessorEditor final: public juce::AudioProcessorEditor {
-public:
+struct IntravenousAudioProcessorEditor final: public juce::AudioProcessorEditor {
     IntravenousAudioProcessorEditor(IntravenousAudioProcessor&, juce::AudioProcessorValueTreeState&);
     ~IntravenousAudioProcessorEditor() override;
 

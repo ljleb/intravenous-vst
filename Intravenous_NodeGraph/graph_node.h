@@ -135,8 +135,8 @@ namespace iv {
         }
 
     public:
-        template<class Is, class Os>
-        explicit GraphNode(Nodes nodes, Edges edges, Is&& inputs, Os&& outputs) :
+        template<class InputConfigs, class OutputConfigs>
+        explicit GraphNode(Nodes nodes, Edges edges, InputConfigs&& inputs, OutputConfigs&& outputs) :
             _nodes(std::move(nodes)),
             _edges(std::move(edges)),
             _public_inputs(std::cbegin(inputs), std::cend(inputs)),
@@ -409,29 +409,29 @@ namespace iv {
             size_t max_latency = 0;
 
             auto process_node = [&](auto& node, size_t node_i)
+            {
+                size_t node_global_latency = 0;
+
+                size_t const num_inputs = (node_i != GRAPH_ID) ? get_num_inputs(node) : num_outputs();
+                for (size_t input_port = 0; input_port < num_inputs; ++input_port)
                 {
-                    size_t node_global_latency = 0;
+                    node_global_latency = std::max(node_global_latency, input_global_latencies[{ node_i, input_port }]);
+                }
 
-                    size_t const num_inputs = (node_i != GRAPH_ID) ? get_num_inputs(node) : num_outputs();
-                    for (size_t input_port = 0; input_port < num_inputs; ++input_port)
+                if (node_i == GRAPH_ID) return;
+
+                node_global_latency += get_internal_latency(node);
+                size_t const num_outputs = get_num_outputs(node);
+                for (size_t output_port = 0; output_port < num_outputs; ++output_port)
+                {
+                    if (auto it = target_of.find({ node_i, output_port }); it != target_of.end())
                     {
-                        node_global_latency = std::max(node_global_latency, input_global_latencies[{ node_i, input_port }]);
+                        size_t new_latency = node_global_latency + get_outputs(node)[output_port].latency;
+                        max_latency = std::max(max_latency, new_latency);
+                        input_global_latencies[it->second] = new_latency;
                     }
-
-                    if (node_i == GRAPH_ID) return;
-
-                    node_global_latency += get_internal_latency(node);
-                    size_t const num_outputs = get_num_outputs(node);
-                    for (size_t output_port = 0; output_port < num_outputs; ++output_port)
-                    {
-                        if (auto it = target_of.find({ node_i, output_port }); it != target_of.end())
-                        {
-                            size_t new_latency = node_global_latency + get_outputs(node)[output_port].latency;
-                            max_latency = std::max(max_latency, new_latency);
-                            input_global_latencies[it->second] = new_latency;
-                        }
-                    }
-                };
+                }
+            };
 
             for (size_t node_i = 0; node_i < _nodes.size() + 1; ++node_i) {
                 if (node_i < _nodes.size())
