@@ -18,7 +18,7 @@ namespace iv {
             node(node), port(port)
         {}
 
-        bool operator==(PortId const&) const noexcept = default;
+        bool operator==(PortId const&) const = default;
     };
 
     struct GraphEdge {
@@ -28,7 +28,7 @@ namespace iv {
             source(source), target(target)
         {}
 
-        bool operator==(GraphEdge const&) const noexcept = default;
+        bool operator==(GraphEdge const&) const = default;
     };
 }
 
@@ -36,7 +36,7 @@ template<>
 struct std::hash<iv::PortId>
 {
     std::hash<size_t> size_t_hash;
-    std::size_t operator()(const iv::PortId& p) const noexcept
+    std::size_t operator()(const iv::PortId& p) const
     {
         return size_t_hash(p.node) ^ (~size_t_hash(p.port) - 1);
     }
@@ -45,14 +45,14 @@ struct std::hash<iv::PortId>
 template<>
 struct std::hash<iv::GraphEdge> {
     std::hash<iv::PortId> port_id_hash;
-    std::size_t operator()(const iv::GraphEdge& e) const noexcept
+    std::size_t operator()(const iv::GraphEdge& e) const
     {
         return port_id_hash(e.source) ^ (~port_id_hash(e.target) - 1);
     }
 };
 
 namespace iv {
-    static size_t calculate_port_buffer_size(size_t latency, size_t input_history, size_t output_history) noexcept
+    static size_t calculate_port_buffer_size(size_t latency, size_t input_history, size_t output_history)
     {
         size_t min_size = 1 + latency + std::max(input_history, output_history);
         size_t pow2_size = size_t(1) << size_t(std::ceil(std::log2(min_size)));
@@ -148,22 +148,22 @@ namespace iv {
             validate_graph();
         }
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return _public_inputs;
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return _public_outputs;
         }
 
-        constexpr auto num_inputs() const noexcept
+        constexpr auto num_inputs() const
         {
             return _public_inputs.size();
         }
 
-        constexpr auto num_outputs() const noexcept
+        constexpr auto num_outputs() const
         {
             return _public_outputs.size();
         }
@@ -370,7 +370,7 @@ namespace iv {
             }
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& private_state = get_private_state(state.buffer);
             for (size_t i = 0; i < num_inputs(); ++i) {
@@ -397,7 +397,7 @@ namespace iv {
             return *reinterpret_cast<GraphState*>(std::align(alignof(GraphState), sizeof(GraphState), object, space));  // first index in the buffer
         }
 
-        size_t internal_latency() const noexcept
+        size_t internal_latency() const
         {
             std::unordered_map<PortId, PortId> target_of;
             for (GraphEdge const& edge : _edges)
@@ -768,7 +768,7 @@ namespace iv {
         }
 
     public:
-        explicit NodeProcessor(GraphNode node) noexcept :
+        explicit NodeProcessor(GraphNode node) :
             _node(std::move(node))
         {
             assert(get_num_inputs(_node) == 0 && "the graph should have 0 inputs");
@@ -778,7 +778,7 @@ namespace iv {
             initialize_graph();
         }
 
-        void tick(std::span<MidiMessage const> midi, size_t index) noexcept
+        void tick(std::span<MidiMessage const> midi, size_t index)
         {
             std::span<std::byte> buffer_span{
                 reinterpret_cast<std::byte*>(_buffer.data()),
@@ -787,7 +787,7 @@ namespace iv {
             _node.tick({ NodeState {.buffer = buffer_span }, midi, index });
         }
 
-        size_t get_latency() const noexcept
+        size_t get_latency() const
         {
             return _node.internal_latency();
         }

@@ -34,26 +34,26 @@ namespace iv {
         size_t _num_inputs;
 
     public:
-        constexpr explicit BinaryOpNode(size_t num_inputs = 2) noexcept :
+        constexpr explicit BinaryOpNode(size_t num_inputs = 2) :
             _num_inputs(num_inputs)
         {}
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::vector<InputConfig>(_num_inputs);
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        constexpr auto num_inputs() const noexcept
+        constexpr auto num_inputs() const
         {
             return _num_inputs;
         }
 
-        constexpr void tick(TickState const& state) noexcept
+        constexpr void tick(TickState const& state)
         {
             auto& out = state.outputs[0];
             Sample result = binary_op_default_v<BinaryOp>;
@@ -71,20 +71,20 @@ namespace iv {
     using QuotientNode = BinaryOpNode<std::divides<Sample>>;
     
     struct PowerNode {
-        constexpr explicit PowerNode() noexcept
+        constexpr explicit PowerNode()
         {}
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<InputConfig, 2>{};
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             Sample result = std::powf(state.inputs[0].get(), state.inputs[1].get());
             state.outputs[0].push(result);
@@ -96,27 +96,27 @@ namespace iv {
         char const* _tag;
 
     public:
-        constexpr explicit BroadcastNode(size_t num_outputs, char const* tag = "") noexcept :
+        constexpr explicit BroadcastNode(size_t num_outputs, char const* tag = "") :
             _num_outputs(num_outputs),
             _tag(tag)
         {}
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<InputConfig, 1>{};
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::vector<OutputConfig>(_num_outputs);
         }
 
-        constexpr auto num_outputs() const noexcept
+        constexpr auto num_outputs() const
         {
             return _num_outputs;
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& in = state.inputs[0];
             Sample sample = in.get();
@@ -128,17 +128,17 @@ namespace iv {
     };
 
     struct DummySinkNode {
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<InputConfig, 1>{};
         }
 
-        void tick(TickState const& state) const noexcept
+        void tick(TickState const& state) const
         {}
     };
 
     struct WarperNode {
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array {
                 InputConfig { .name = "in" },
@@ -146,15 +146,15 @@ namespace iv {
             };
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array {
-                OutputConfig { .name = "out", .latency = 1 },
+                OutputConfig { .name = "anti_aliased", .latency = 1 },
                 OutputConfig { .name = "aliased" },
             };
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto const& in = state.inputs[0];
             auto const& in_threshold = state.inputs[1];
@@ -186,11 +186,11 @@ namespace iv {
         double const* _update_frequency;
 
     public:
-        constexpr explicit Integrator(double const* update_frequency) noexcept :
+        constexpr explicit Integrator(double const* update_frequency) :
             _update_frequency(update_frequency)
         {}
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<iv::InputConfig, 3>{
                 InputConfig{},
@@ -199,12 +199,12 @@ namespace iv {
             };
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<iv::OutputConfig, 1>{};
         }
 
-        void tick(iv::TickState const& state) noexcept
+        void tick(iv::TickState const& state)
         {
             auto& out = state.outputs[0];
             auto const& reset = state.inputs[2].get();
@@ -225,23 +225,23 @@ namespace iv {
         size_t _latency;
 
     public:
-        constexpr explicit Latency(size_t latency = 1) noexcept :
+        constexpr explicit Latency(size_t latency = 1) :
             _latency(latency)
         {}
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<iv::InputConfig, 1>{};
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array{
                 iv::OutputConfig { .latency = _latency },
             };
         }
 
-        void tick(iv::TickState const& state) noexcept
+        void tick(iv::TickState const& state)
         {
             auto const& in = state.inputs[0];
             auto const& out = state.outputs[0];
@@ -252,12 +252,12 @@ namespace iv {
     struct ConstantNode {
         Sample _value;
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        constexpr void tick(TickState const& state) noexcept
+        constexpr void tick(TickState const& state)
         {
             auto& out = state.outputs[0];
             out.push(_value);
@@ -276,18 +276,18 @@ namespace iv {
             Sample min = -1.0,
             Sample max = 1.0,
             std::optional<unsigned int> seed = {}
-        ) noexcept :
+        ) :
             _min(min),
             _max(max),
             _seed(seed)
         {}
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             if (!_generator.has_value()) {
                 _generator.emplace(_seed.has_value() ? _seed.value() : std::random_device{}());
@@ -330,18 +330,18 @@ namespace iv {
             Sample min = 0.0,
             Sample max = 1.0,
             std::optional<Sample> seed = {}
-        ) noexcept :
+        ) :
             _min(min),
             _max(max),
             _seed(seed.has_value() ? *seed : (std::random_device{}() << (sizeof(unsigned int)*CHAR_BIT)) + std::random_device{}())
         {}
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& out = state.outputs[0];
             uint64_t uniform_int = splitmix64(state.index);
@@ -389,7 +389,7 @@ namespace iv {
             Sample min = -1.0,
             Sample max = 1.0,
             std::optional<uint64_t> seed = {}
-        ) noexcept :
+        ) :
             _seed(make_seed(seed)),
             _min(min),
             _max(max)
@@ -397,12 +397,12 @@ namespace iv {
             assert(haveAESNI() && "This machine does not have the AES-NI instruction set, use a different noise node.");
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& out = state.outputs[0];
             Rng::ctr_type counter = make_index(state.index);
@@ -420,22 +420,22 @@ namespace iv {
         explicit UniformToCauchyNode(
             Sample x0 = 1.0,
             Sample gamma = 1.0
-        ) noexcept :
+        ) :
             _x0(x0),
             _gamma(gamma)
         {}
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<InputConfig, 1>{};
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& in = state.inputs[0];
             auto& out = state.outputs[0];
@@ -460,18 +460,18 @@ namespace iv {
             ptrdiff_t min = -5,
             ptrdiff_t max = 4,
             Sample lambda = 0.5
-        ) noexcept :
+        ) :
             _min(min),
             _max(max),
             _lambda(lambda)
         {}
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<InputConfig, 1>{};
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
@@ -500,7 +500,7 @@ namespace iv {
             }
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& in = state.inputs[0];
             auto& out = state.outputs[0];
@@ -519,23 +519,23 @@ namespace iv {
         explicit UniformToGaussianNode(
             Sample mean = 0.0,
             Sample std = 1.0
-        ) noexcept :
+        ) :
             _mean(mean),
             _std(std)
         {
         }
 
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array<InputConfig, 1>{};
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& in = state.inputs[0];
             auto& out = state.outputs[0];
@@ -585,7 +585,7 @@ namespace iv {
             Sample mean = 0.0,
             Sample std = 1.0,
             std::optional<uint64_t> seed = {}
-        ) noexcept :
+        ) :
             _seed(make_seed(seed)),
             _mean(mean),
             _std(std)
@@ -593,12 +593,12 @@ namespace iv {
             assert(haveAESNI() && "This machine does not have the AES-NI instruction set, use a different noise node.");
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array<OutputConfig, 1>{};
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             auto& out = state.outputs[0];
             Rng::ctr_type counter = make_index(state.index);
@@ -626,7 +626,7 @@ namespace iv {
             size_t order,
             float lr = 1e-4,
             float decay = 1.0
-        ) noexcept
+        )
             : _look_ahead(look_ahead)
             , _order(order)
             , _lr(lr)
@@ -635,14 +635,14 @@ namespace iv {
             assert(_order >= _look_ahead && "window length must cover look-ahead");
         }
 
-        auto inputs() const noexcept
+        auto inputs() const
         {
             return std::array {
                 InputConfig { .history = _order - 1 }
             };
         }
 
-        auto outputs() const noexcept
+        auto outputs() const
         {
             return std::array {
                 OutputConfig { .history = _look_ahead } // must recall past predictions
@@ -658,7 +658,7 @@ namespace iv {
             alloc.assign(alloc.at(st.w, 0),  1.f);
         }
 
-        void tick(TickState const& ts) const noexcept
+        void tick(TickState const& ts) const
         {
             State& st = get_state<State>(ts.buffer);
             auto  &in  = ts.inputs[0];
@@ -718,7 +718,7 @@ namespace iv {
             size_t order,
             size_t ar_order = 2,
             size_t hidden = 8,
-            float  mu = 1e-6f) noexcept
+            float  mu = 1e-6f)
             : _L(look_ahead)
             , _p(order)
             , _q(ar_order)
@@ -729,12 +729,12 @@ namespace iv {
         }
 
         /* graph meta-data */
-        auto inputs()  const noexcept {
+        auto inputs()  const {
             return std::array {            // need x[n-L] … x[n-L-(p-1)]
                 InputConfig {.history = _p - 1 }
             };
         }
-        auto outputs() const noexcept {
+        auto outputs() const {
             return std::array {
                 OutputConfig { .history = _L + _q }   // recall ŷ[n-L]
             };
@@ -753,7 +753,7 @@ namespace iv {
             allocator.fill_n(s.b1, 0.f);
         }
 
-        void tick(TickState const& ts) const noexcept
+        void tick(TickState const& ts) const
         {
             State& s = get_state<State>(ts.buffer);
             auto& in = ts.inputs[0];
@@ -842,7 +842,7 @@ namespace iv {
             size_t  ar_order = 2,
             size_t  hidden1 = 16,
             size_t  hidden2 = 8,
-            float   mu = 2e-6f) noexcept
+            float   mu = 2e-6f)
             : _L(look_ahead), _p(order), _q(ar_order),
             _h1(hidden1), _h2(hidden2), _mu(mu)
         {
@@ -850,12 +850,12 @@ namespace iv {
         }
 
         /* ───── graph meta-data ───── */
-        auto inputs()  const noexcept {
+        auto inputs()  const {
             return std::array{
                 InputConfig{.history = _p - 1 }
             };
         }
-        auto outputs() const noexcept {
+        auto outputs() const {
             return std::array{
                 OutputConfig{.latency = 0, .history = _L + _q }
             };
@@ -883,7 +883,7 @@ namespace iv {
         }
 
         /* ───── processing ───── */
-        void tick(TickState const& ts) const noexcept
+        void tick(TickState const& ts) const
         {
             State& s = st(ts.buffer);
             auto& in = ts.inputs[0];
@@ -978,7 +978,7 @@ namespace iv {
         constexpr PolyResidualPredictor(size_t look_ahead,
             size_t order,
             float  mu = 1e-5f
-        ) noexcept
+        )
             : _L(look_ahead)
             , _p(order)
             , _mu(mu)
@@ -987,12 +987,12 @@ namespace iv {
         }
 
         /* ─── meta-data ─── */
-        auto inputs()  const noexcept {
+        auto inputs()  const {
             return std::array {
                 InputConfig {.history = _p - 1 },
             };
         }
-        auto outputs() const noexcept {
+        auto outputs() const {
             return std::array {
                 OutputConfig { .history = _L },
             };
@@ -1008,7 +1008,7 @@ namespace iv {
         }
 
         /* ─── processing ─── */
-        void tick(TickState const& ts) const noexcept
+        void tick(TickState const& ts) const
         {
             State& s = st(ts.buffer);
             auto& in = ts.inputs[0];
@@ -1059,8 +1059,8 @@ namespace iv {
         std::vector<InputConfig> _inputs;
         std::vector<OutputConfig> _outputs;
         size_t _internal_latency;
-        std::span<std::byte>(*_init_buffer_fn)(void*, TypeErasedAllocator) noexcept;
-        void (*_tick_fn)(void*, TickState const&) noexcept;
+        std::span<std::byte>(*_init_buffer_fn)(void*, TypeErasedAllocator);
+        void (*_tick_fn)(void*, TickState const&);
 
     public:
         template<typename Node>
@@ -1069,49 +1069,49 @@ namespace iv {
             if constexpr (std::is_empty_v<Node>)
             {
                 _node = nullptr;
-                _init_buffer_fn = [](void*, TypeErasedAllocator allocator) noexcept { return do_init_buffer(Node{}, allocator); };
-                _tick_fn = [](void*, TickState const& state) noexcept { Node{}.tick(state); };
+                _init_buffer_fn = [](void*, TypeErasedAllocator allocator) { return do_init_buffer(Node{}, allocator); };
+                _tick_fn = [](void*, TickState const& state) { Node{}.tick(state); };
             }
             else
             {
                 _node = std::make_shared<Node>(node);
-                _init_buffer_fn = [](void* node, TypeErasedAllocator allocator) noexcept { return do_init_buffer(*static_cast<Node*>(node), allocator); };
-                _tick_fn = [](void* node, TickState const& state) noexcept { static_cast<Node*>(node)->tick(state); };
+                _init_buffer_fn = [](void* node, TypeErasedAllocator allocator) { return do_init_buffer(*static_cast<Node*>(node), allocator); };
+                _tick_fn = [](void* node, TickState const& state) { static_cast<Node*>(node)->tick(state); };
             }
             _inputs.assign_range(get_inputs(node));
             _outputs.assign_range(get_outputs(node));
             _internal_latency = get_internal_latency(node);
         }
 
-        constexpr std::span<InputConfig const> inputs() const noexcept
+        constexpr std::span<InputConfig const> inputs() const
         {
             return _inputs;
         }
 
-        constexpr std::span<OutputConfig const> outputs() const noexcept
+        constexpr std::span<OutputConfig const> outputs() const
         {
             return _outputs;
         }
 
-        constexpr size_t internal_latency() const noexcept
+        constexpr size_t internal_latency() const
         {
             return _internal_latency;
         }
 
         template<typename Allocator>
-        constexpr std::span<std::byte> init_buffer(Allocator& allocator) const noexcept
+        constexpr std::span<std::byte> init_buffer(Allocator& allocator) const
         {
             return _init_buffer_fn(_node.get(), TypeErasedAllocator{ allocator });
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             _tick_fn(_node.get(), state);
         }
     };
     
     struct InterpolationNode {
-        constexpr auto inputs() const noexcept
+        constexpr auto inputs() const
         {
             return std::array{
                 InputConfig { "a" },
@@ -1120,14 +1120,14 @@ namespace iv {
             };
         }
 
-        constexpr auto outputs() const noexcept
+        constexpr auto outputs() const
         {
             return std::array {
                 OutputConfig { "out" },
             };
         }
 
-        void tick(TickState const& state) noexcept
+        void tick(TickState const& state)
         {
             Sample a = state.inputs[0].get();
             Sample b = state.inputs[1].get();

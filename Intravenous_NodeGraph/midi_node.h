@@ -44,7 +44,7 @@ namespace iv {
             GraphNode voice_node,
             Sample silence_threshold = std::pow(10.0, -60.0 / 20.0)  // -60db
         ) noexcept :
-            _graph_node(voice_node),
+            _graph_node(std::move(voice_node)),
             _internal_latency_cache(get_internal_latency(_graph_node)),
             _silence_threshold(silence_threshold)
         {

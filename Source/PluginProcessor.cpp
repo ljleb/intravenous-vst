@@ -71,15 +71,21 @@ IntravenousAudioProcessor::IntravenousAudioProcessor():
     _noise_high_pass(_value_tree_state.getRawParameterValue(NOISE_HIGH_PASS_ID)),
     _song_index(0)
 {
-    _node_processor = iv::init_graph(
-        &_update_frequency,
-        _channels,
-        _uniform_noise_level,
-        _gaussian_noise_ratio,
-        _harmonics_noise_ratio,
-        _noise_low_pass,
-        _noise_high_pass);
-    setLatencySamples(_node_processor->get_latency());
+    try {
+        _node_processor = iv::init_graph(
+            &_update_frequency,
+            _channels,
+            _uniform_noise_level,
+            _gaussian_noise_ratio,
+            _harmonics_noise_ratio,
+            _noise_low_pass,
+            _noise_high_pass);
+        setLatencySamples(_node_processor->get_latency());
+    }
+    catch (std::exception const& e) {
+        juce::Logger::outputDebugString(e.what());
+        throw;
+    }
 }
 
 IntravenousAudioProcessor::~IntravenousAudioProcessor() {

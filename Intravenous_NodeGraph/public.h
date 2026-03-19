@@ -13,7 +13,7 @@ namespace iv {
         std::atomic<float>* harmonics_noise_ratio,
         std::atomic<float>* noise_lo_pass,
         std::atomic<float>* noise_hi_pass
-    ) noexcept;
-    void tick(NodeProcessor* processor, std::span<MidiMessage const> midi, size_t index) noexcept;
+    );
+    void tick(NodeProcessor* processor, std::span<MidiMessage const> midi, size_t index);
     void free_graph(NodeProcessor* processor);
 }

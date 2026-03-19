@@ -6,43 +6,21 @@
 #include <any>
 
 
-template<typename Node>
-size_t emplace_back_id(std::vector<iv::TypeErasedNode>& nodes, Node const& node)
-{
-    nodes.emplace_back(node);
-    return nodes.size() - 1;
-};
-
-template<typename Fn>
-iv::GraphNode make_subgraph(Fn&& fn)
-{
-    iv::GraphNode::Nodes local_nodes;
-    iv::GraphNode::Edges local_edges;
-    auto [ins, outs] = std::forward<Fn>(fn)(local_nodes, local_edges);
-    return iv::GraphNode(std::move(local_nodes), std::move(local_edges), ins, outs);
-};
-
-template<typename Fn>
-size_t make_subgraph_id(iv::GraphNode::Nodes& nodes, Fn&& fn)
-{
-    return emplace_back_id(nodes, make_subgraph(std::forward<Fn>(fn)));
-};
-
 template<class T>
 class KnobNode {
     std::atomic<T>* _value;
 
 public:
-    explicit KnobNode(std::atomic<T>* value) noexcept :
+    explicit KnobNode(std::atomic<T>* value) :
         _value(value)
     {}
 
-    constexpr auto outputs() const noexcept
+    constexpr auto outputs() const
     {
         return std::array<iv::OutputConfig, 1>{};
     }
 
-    void tick(iv::TickState const& state) noexcept {
+    void tick(iv::TickState const& state) {
         auto& out = state.outputs[0];
         out.push(_value->load(std::memory_order::relaxed));
     }
@@ -52,16 +30,16 @@ class AudioStreamNode {
     iv::Sample*& _destination;
 
 public:
-    constexpr explicit AudioStreamNode(iv::Sample*& destination) noexcept :
+    constexpr explicit AudioStreamNode(iv::Sample*& destination) :
         _destination(destination)
     {}
 
-    constexpr auto inputs() const noexcept
+    constexpr auto inputs() const
     {
         return std::array<iv::InputConfig, 1>{};
     }
 
-    void tick(iv::TickState const& state) noexcept
+    void tick(iv::TickState const& state)
     {
         auto& in = state.inputs[0];
         *_destination = std::fmin(std::fmax(in.get(), -1.0), 1.0);
@@ -72,21 +50,21 @@ struct WhackIirThing {
     double const* _update_frequency;
 
 public:
-    constexpr explicit WhackIirThing(double const* update_frequency) noexcept :
+    constexpr explicit WhackIirThing(double const* update_frequency) :
         _update_frequency(update_frequency)
     {}
 
-    constexpr auto inputs() const noexcept
+    constexpr auto inputs() const
     {
         return std::array<iv::InputConfig, 3>{};
     }
 
-    constexpr auto outputs() const noexcept
+    constexpr auto outputs() const
     {
         return std::array<iv::OutputConfig, 2>{};
     }
 
-    void tick(iv::TickState const& state) const noexcept
+    void tick(iv::TickState const& state) const
     {
         iv::Sample in_dry = state.inputs[0].get();
         iv::Sample in_control = state.inputs[1].get();
@@ -110,11 +88,11 @@ public:
     static constexpr iv::Sample const FMIN = 1;
     static constexpr iv::Sample const FMAX = 4.41e4;
 
-    constexpr explicit SimpleIirHighPass(double const* sample_period) noexcept :
+    constexpr explicit SimpleIirHighPass(double const* sample_period) :
         _sample_period(sample_period)
     {}
 
-    constexpr auto inputs() const noexcept
+    constexpr auto inputs() const
     {
         return std::array {
             iv::InputConfig { .history = 1 },
@@ -122,12 +100,12 @@ public:
         };
     }
 
-    constexpr auto outputs() const noexcept
+    constexpr auto outputs() const
     {
         return std::array<iv::OutputConfig, 1>{};
     }
 
-    void tick(iv::TickState const& state) const noexcept
+    void tick(iv::TickState const& state) const
     {
         auto& in = state.inputs[0];
         auto& ctrl = state.inputs[1];
@@ -166,11 +144,11 @@ public:
     static constexpr iv::Sample const FMIN = 2e1;
     static constexpr iv::Sample const FMAX = 4.41e4;
 
-    constexpr explicit SimpleIirLowPass(double const* sample_period) noexcept :
+    constexpr explicit SimpleIirLowPass(double const* sample_period) :
         _sample_period(sample_period)
     {}
 
-    constexpr auto inputs() const noexcept
+    constexpr auto inputs() const
     {
         return std::array {
             iv::InputConfig { .name = "in", .history=1 },
@@ -178,14 +156,14 @@ public:
         };
     }
 
-    constexpr auto outputs() const noexcept
+    constexpr auto outputs() const
     {
         return std::array {
             iv::OutputConfig { "out" },
         };
     }
 
-    void tick(iv::TickState const& state) const noexcept
+    void tick(iv::TickState const& state) const
     {
         auto& in = state.inputs[0];
         auto& ctrl = state.inputs[1];
@@ -223,186 +201,156 @@ public:
     }
 };
 
-iv::NodeProcessor* iv::init_graph(
+static iv::GraphNode feedback_voice(
+    double* sample_period
+) {
+    using namespace iv;
+    GraphBuilder g;
+
+    auto amplitude = g.input("amplitude");
+    auto raw_frequency = g.input("frequency");
+    auto reset = g.input("reset");
+    auto voice_noise = g.input("voice_noise");
+
+    auto integrator = g.node<Integrator>(sample_period);
+    auto warper = g.node<WarperNode>();
+    //auto predictor = g.node(iv::NlmsPredictor(1, 100, 1e-5, 1.0));
+    //auto predictor = g.node(iv::TanhResidualPredictor(8, 8, 2, 4, 1e-6));
+    //auto predictor = g.node(iv::TanhResidualAR2Predictor(0, 16, 16, 8, 8, 1e-8));
+    //auto predictor = g.node(iv::PolyResidualPredictor(1, 16, 1e-6));
+    //auto lo_pass = g.node(SimpleIirLowPass(sample_period));
+    //auto lo_pass_coef = g.node(iv::ConstantNode(1.0));
+    //auto latency = g.node(iv::Latency(100));
+    //auto lo_pass2 = g.node(SimpleIirLowPass(sample_period));
+
+    auto frequency = g.node<ProductNode>();
+    auto constant = g.node<ConstantNode>(2.0);
+    frequency(raw_frequency, constant);
+
+    /*auto noise = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
+    {
+        auto product = g.node(iv::ProductNode());
+        auto product2 = g.node(iv::ProductNode());
+        auto constant = g.node(iv::ConstantNode(1 / 440.0 / 2.0));
+
+        edges.insert(iv::GraphEdge { { graph,    0 }, { product,  0 } });
+        edges.insert(iv::GraphEdge { { graph,    1 }, { product,  1 } });
+        edges.insert(iv::GraphEdge { { product,  0 }, { product2, 0 } });
+        edges.insert(iv::GraphEdge { { constant, 0 }, { product2, 1 } });
+        edges.insert(iv::GraphEdge { { product2, 0 }, { graph,    0 } });
+
+        return std::make_tuple(2, 1);
+    });*/
+
+    //edges.insert(iv::GraphEdge { { frequency, 0 },                      { noise, 0 } });
+    //edges.insert(iv::GraphEdge { { graph, voice_noise_generator_port }, { noise, 1 } });
+
+    // low pass
+    //edges.insert(iv::GraphEdge{ { lo_pass_coef, 0 }, { lo_pass, 1 } });
+    //edges.insert(iv::GraphEdge{ { lo_pass_coef, 0 }, { lo_pass2, 1 } });
+
+    // main loop
+    //edges.insert(iv::GraphEdge { { integrator, 0 }, { lo_pass,    0 } });
+    //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { predictor,  0 } });
+    //edges.insert(iv::GraphEdge { { predictor,    0 }, { lo_pass2,  0 } });
+    //edges.insert(iv::GraphEdge { { lo_pass2,  0 }, { warper,     0 } });
+
+    //edges.insert(iv::GraphEdge { { integrator, 0 }, { predictor,  0 } });
+    //edges.insert(iv::GraphEdge { { integrator, 0 }, { lo_pass,    0 } });
+    //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { predictor,  0 } });
+
+    //edges.insert(iv::GraphEdge { { predictor,  0 }, { warper,     0 } });
+    auto noisy_integrator = g.node<SumNode>();
+    noisy_integrator(integrator, voice_noise);
+    warper(noisy_integrator);
+    integrator(warper["anti_aliased"], frequency, reset);
+
+    //edges.insert(iv::GraphEdge { { warper,     1 }, { lo_pass,    0 } });
+    //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { latency,    0 } });
+    //edges.insert(iv::GraphEdge { { latency,    0 }, { predictor,  0 } });
+    //edges.insert(iv::GraphEdge { { warper,  1 }, { latency, 0 } });
+    //edges.insert(iv::GraphEdge { { warper,     1 }, { dummy_sink, 0 } });
+
+    // knobs
+    //edges.insert(iv::GraphEdge { { graph,     voice_warp_threshold_port },  { warper,     1 } });
+    //edges.insert(iv::GraphEdge { { noise,     0 },                          { warper,     0 } });
+
+    // out
+    auto out_amplified = g.node<ProductNode>();
+    g.outputs(out_amplified(amplitude, warper["aliased"]));
+
+    return std::move(g).build();
+}
+
+auto iv::init_graph(
     double* sample_period,
     Sample* channels[2],
     std::atomic<float>* noise_level,
     std::atomic<float>* gaussian_noise_ratio,
     std::atomic<float>* warp_threshold,
     std::atomic<float>* noise_lo_pass,
-    std::atomic<float>* noise_hi_pass) noexcept
+    std::atomic<float>* noise_hi_pass) -> NodeProcessor*
 {
-    auto graph = make_subgraph([=](auto& nodes, auto& edges)
+    GraphBuilder g;
+    //auto warp_threshold_knob = g.node(KnobNode<float>(warp_threshold));
+    //auto iir_outw0_knob = g.node(KnobNode<float>(_iir_outw0));
+
+    std::array<NodeRef, 2> noises;
+    for (size_t i = 0; i < noises.size(); ++i)
     {
-        constexpr auto graph = iv::GRAPH_ID;
-        //auto warp_threshold_knob = emplace_back_id(nodes, KnobNode<float>(warp_threshold));
-        //auto iir_outw0_knob = emplace_back_id(nodes, KnobNode<float>(_iir_outw0));
-
-        std::array<size_t, 2> noises;
-        for (size_t i = 0; i < noises.size(); ++i)
+        noises[i] = g.subgraph([&](auto& g)
         {
-            noises[i] = make_subgraph_id(nodes, [&](auto& nodes, auto& edges)
-            {
-                auto level_knob = emplace_back_id(nodes, KnobNode<float>(noise_level));
-                auto lo_pass_knob = emplace_back_id(nodes, KnobNode<float>(noise_lo_pass));
-                auto hi_pass_knob = emplace_back_id(nodes, KnobNode<float>(noise_hi_pass));
-                auto generator = emplace_back_id(nodes, iv::DeterministicUniformAESNoiseNode(-1, 1, 0ull));
-                auto product = emplace_back_id(nodes, iv::ProductNode());
-                auto lo_pass = emplace_back_id(nodes, SimpleIirLowPass(sample_period));
-                auto hi_pass = emplace_back_id(nodes, SimpleIirHighPass(sample_period));
+            auto level_knob = g.node<KnobNode<float>>(noise_level);
+            auto lo_pass_knob = g.node<KnobNode<float>>(noise_lo_pass);
+            auto hi_pass_knob = g.node<KnobNode<float>>(noise_hi_pass);
+            auto generator = g.node<DeterministicUniformAESNoiseNode>(-1, 1, 0ull);
+            auto product = g.node<ProductNode>();
+            auto lo_pass = g.node<SimpleIirLowPass>(sample_period);
+            auto hi_pass = g.node<SimpleIirHighPass>(sample_period);
 
-                auto u_to_n_knob = emplace_back_id(nodes, KnobNode<float>(gaussian_noise_ratio));
-                auto u_to_n = emplace_back_id(nodes, iv::UniformToGaussianNode(0.0, 0.5));
-                auto u_to_c = emplace_back_id(nodes, iv::UniformToCauchyNode(0.0, 0.01));
-                auto interp = emplace_back_id(nodes, iv::InterpolationNode());
+            auto u_to_n_knob = g.node<KnobNode<float>>(gaussian_noise_ratio);
+            auto u_to_n = g.node<UniformToGaussianNode>(0.0, 0.5);
+            auto u_to_c = g.node<UniformToCauchyNode>(0.0, 0.01);
+            auto interp = g.node<InterpolationNode>();
 
-                edges.insert(iv::GraphEdge { { interp,       0 }, { lo_pass, 0 } });
-                edges.insert(iv::GraphEdge { { lo_pass_knob, 0 }, { lo_pass, 1 } });
-                edges.insert(iv::GraphEdge { { lo_pass,      0 }, { hi_pass, 0 } });
-                edges.insert(iv::GraphEdge { { hi_pass_knob, 0 }, { hi_pass, 1 } });
-                edges.insert(iv::GraphEdge { { hi_pass,      0 }, { product, 0 } });
-                edges.insert(iv::GraphEdge { { level_knob,   0 }, { product, 1 } });
-                edges.insert(iv::GraphEdge { { product,      0 }, { graph,   0 } });
+            u_to_c(generator);
+            u_to_n(generator);
 
-                edges.insert(iv::GraphEdge { { generator,    0 }, { u_to_c,  0 } });
-                edges.insert(iv::GraphEdge { { generator,    0 }, { u_to_n,  0 } });
-                edges.insert(iv::GraphEdge { { u_to_n,       0 }, { interp,  0 } });
-                edges.insert(iv::GraphEdge { { u_to_c,       0 }, { interp,  1 } });
-                edges.insert(iv::GraphEdge { { u_to_n_knob,  0 }, { interp,  2 } });
+            interp(u_to_n, u_to_c, u_to_n_knob);
 
-                return std::make_tuple(
-                    std::array<InputConfig, 0>{},
-                    std::array<OutputConfig, 1>{}
-                );
-            });
-        }
+            lo_pass(interp, lo_pass_knob);
+            hi_pass(lo_pass, hi_pass_knob);
+            product(hi_pass, level_knob);
 
-        auto midi_voice = make_subgraph([&](auto& nodes, auto& edges)
-        {
-            size_t amplitude_port = 0;
-            size_t frequency_port = 1;
-            size_t reset_port = 2;
-            size_t voice_noise_generator_port = 3;
-
-            auto integrator = emplace_back_id(nodes, iv::Integrator(sample_period));
-            auto warper = emplace_back_id(nodes, iv::WarperNode());
-            //auto predictor = emplace_back_id(nodes, iv::NlmsPredictor(1, 100, 1e-5, 1.0));
-            //auto predictor = emplace_back_id(nodes, iv::TanhResidualPredictor(8, 8, 2, 4, 1e-6));
-            //auto predictor = emplace_back_id(nodes, iv::TanhResidualAR2Predictor(0, 16, 16, 8, 8, 1e-8));
-            //auto predictor = emplace_back_id(nodes, iv::PolyResidualPredictor(1, 16, 1e-6));
-            //auto lo_pass = emplace_back_id(nodes, SimpleIirLowPass(sample_period));
-            //auto lo_pass_coef = emplace_back_id(nodes, iv::ConstantNode(1.0));
-            //auto latency = emplace_back_id(nodes, iv::Latency(100));
-            //auto lo_pass2 = emplace_back_id(nodes, SimpleIirLowPass(sample_period));
-
-            auto frequency = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
-            {
-                auto product = emplace_back_id(nodes, iv::ProductNode());
-                auto constant = emplace_back_id(nodes, iv::ConstantNode(2.0));
-
-                edges.insert(iv::GraphEdge { { graph,    0 }, { product, 0 } });
-                edges.insert(iv::GraphEdge { { constant, 0 }, { product, 1 } });
-                edges.insert(iv::GraphEdge { { product,  0 }, { graph,   0 } });
-
-                return std::make_tuple(
-                    std::array<InputConfig, 1>{},
-                    std::array<OutputConfig, 1>{}
-                );
-            });
-            
-            /*auto noise = make_subgraph_id(nodes, [](auto& nodes, auto& edges)
-            {
-                auto product = emplace_back_id(nodes, iv::ProductNode());
-                auto product2 = emplace_back_id(nodes, iv::ProductNode());
-                auto constant = emplace_back_id(nodes, iv::ConstantNode(1 / 440.0 / 2.0));
-
-                edges.insert(iv::GraphEdge { { graph,    0 }, { product,  0 } });
-                edges.insert(iv::GraphEdge { { graph,    1 }, { product,  1 } });
-                edges.insert(iv::GraphEdge { { product,  0 }, { product2, 0 } });
-                edges.insert(iv::GraphEdge { { constant, 0 }, { product2, 1 } });
-                edges.insert(iv::GraphEdge { { product2, 0 }, { graph,    0 } });
-
-                return std::make_tuple(2, 1);
-            });*/
-
-            edges.insert(iv::GraphEdge { { graph, frequency_port }, { frequency, 0 } });
-
-            //edges.insert(iv::GraphEdge { { frequency, 0 },                      { noise, 0 } });
-            //edges.insert(iv::GraphEdge { { graph, voice_noise_generator_port }, { noise, 1 } });
-
-            // low pass
-            //edges.insert(iv::GraphEdge{ { lo_pass_coef, 0 }, { lo_pass, 1 } });
-            //edges.insert(iv::GraphEdge{ { lo_pass_coef, 0 }, { lo_pass2, 1 } });
-
-            // main loop
-            //edges.insert(iv::GraphEdge { { integrator, 0 }, { lo_pass,    0 } });
-            //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { predictor,  0 } });
-            //edges.insert(iv::GraphEdge { { predictor,    0 }, { lo_pass2,  0 } });
-            //edges.insert(iv::GraphEdge { { lo_pass2,  0 }, { warper,     0 } });
-
-            //edges.insert(iv::GraphEdge { { integrator, 0 }, { predictor,  0 } });
-            //edges.insert(iv::GraphEdge { { integrator, 0 }, { lo_pass,    0 } });
-            //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { predictor,  0 } });
-
-            //edges.insert(iv::GraphEdge { { predictor,  0 }, { warper,     0 } });
-            edges.insert(iv::GraphEdge { { integrator, 0 }, { warper,     0 } });
-            //edges.insert(iv::GraphEdge { { warper,     1 }, { lo_pass,    0 } });
-            //edges.insert(iv::GraphEdge { { lo_pass,    0 }, { latency,    0 } });
-            //edges.insert(iv::GraphEdge { { latency,    0 }, { predictor,  0 } });
-            //edges.insert(iv::GraphEdge { { warper,  1 }, { latency, 0 } });
-            edges.insert(iv::GraphEdge { { warper,  1 },    { integrator, 0 } });
-            //edges.insert(iv::GraphEdge { { warper,     1 }, { dummy_sink, 0 } });
-
-            edges.insert(iv::GraphEdge { { graph, reset_port }, { integrator, 2 } });
-
-            // knobs
-            edges.insert(iv::GraphEdge { { frequency, 0 },                          { integrator, 1 } });
-            //edges.insert(iv::GraphEdge { { graph,     voice_warp_threshold_port },  { warper,     1 } });
-            //edges.insert(iv::GraphEdge { { noise,     0 },                          { warper,     0 } });
-            edges.insert(iv::GraphEdge { { graph, voice_noise_generator_port },     { warper,     0 } });
-
-            // out
-            auto amplitude = emplace_back_id(nodes, iv::ProductNode());
-            edges.insert(iv::GraphEdge { { graph,     amplitude_port }, { amplitude, 0 } });
-            edges.insert(iv::GraphEdge { { warper,    0 },              { amplitude, 1 } });
-            edges.insert(iv::GraphEdge { { amplitude, 0 },              { graph,     0 } });
-
-            return std::make_tuple(
-                std::array<InputConfig, 4>{},
-                std::array<OutputConfig, 1>{}
-            );
+            g.outputs(product);
         });
+    }
 
-        auto midi_left = emplace_back_id(nodes, iv::MidiNode(midi_voice));
-        auto midi_right = emplace_back_id(nodes, iv::MidiNode(midi_voice));
+    auto midi_voice = feedback_voice(sample_period);
 
-        auto left_out = emplace_back_id(nodes, AudioStreamNode(channels[0]));
-        auto right_out = emplace_back_id(nodes, AudioStreamNode(channels[1]));
+    auto midi_left = g.node<MidiNode>(midi_voice);
+    auto midi_right = g.node<MidiNode>(midi_voice);
 
-        // shared inputs
-        //edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_left, 0 } });
-        //edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_right, 0 } });
+    auto left_out = g.node<AudioStreamNode>(channels[0]);
+    auto right_out = g.node<AudioStreamNode>(channels[1]);
 
-        for (size_t i = 0; i < noises.size(); ++i)
-        {
-            edges.insert(iv::GraphEdge{ { noises[i], 0 }, { midi_left,  0 } });
-            edges.insert(iv::GraphEdge{ { noises[i], 0 }, { midi_right, 0 } });
-        }
+    // shared inputs
+    //edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_left, 0 } });
+    //edges.insert(iv::GraphEdge { { warp_threshold_knob, 0 }, { midi_right, 0 } });
 
-        edges.insert(iv::GraphEdge { { midi_left,  0 }, { left_out,  0 } });
-        edges.insert(iv::GraphEdge { { midi_right, 0 }, { right_out, 0 } });
+    midi_left(noises[0]);
+    midi_right(noises[1]);
+    left_out(midi_left);
+    right_out(midi_right);
 
-        return std::make_tuple(
-            std::array<InputConfig, 0>{},
-            std::array<OutputConfig, 0>{}
-        );
-    });
+    g.outputs();
 
-    size_t const latency = iv::get_internal_latency(graph);
+    auto graph = std::move(g).build();
+    size_t const latency = iv::get_internal_latency(g);
     return new NodeProcessor(std::move(graph));
 }
 
-void iv::tick(NodeProcessor* processor, std::span<MidiMessage const> midi, size_t index) noexcept
+void iv::tick(NodeProcessor* processor, std::span<MidiMessage const> midi, size_t index)
 {
     processor->tick(midi, index);
 }

@@ -20,17 +20,18 @@ namespace iv {
     namespace details {
         [[noreturn]] inline void error(std::string msg)
         {
-            throw std::logic_error(std::move(msg));
+            throw std::logic_error(msg);
         }
     }
 
     class GraphBuilder;
 
     struct SignalRef {
-        GraphBuilder* graph_builder;
-        size_t node_index;
-        size_t output_port;
+        GraphBuilder* graph_builder{};
+        size_t node_index{};
+        size_t output_port{};
 
+        SignalRef() = default;
         explicit SignalRef(GraphBuilder& graph_builder_, size_t node_index, size_t output_port);
 
         std::string to_string() const;
@@ -42,11 +43,12 @@ namespace iv {
     };
 
     class NodeRef {
-        GraphBuilder* _graph_builder;
-        size_t _index;
+        GraphBuilder* _graph_builder{};
+        size_t _index{};
 
     public:
-        explicit NodeRef(GraphBuilder& graph_builder, size_t index) noexcept;
+        NodeRef() = default;
+        explicit NodeRef(GraphBuilder& graph_builder, size_t index);
 
         TypeErasedNode& node() const;
 
@@ -55,8 +57,8 @@ namespace iv {
         operator SignalRef() const;
 
         template<class... Refs>
-        void operator()(Refs&&... refs) const;
-        void operator()(std::initializer_list<NamedRef> refs) const;
+        NodeRef operator()(Refs&&... refs) const;
+        NodeRef operator()(std::initializer_list<NamedRef> refs) const;
 
         std::string to_string() const;
     };
@@ -78,7 +80,7 @@ namespace iv {
         bool _outputs_defined{ false };
 
     public:
-        explicit GraphBuilder(std::string_view parent_path = {}) noexcept :
+        explicit GraphBuilder(std::string_view parent_path = {}):
             _parent_path(parent_path)
         {
         }
@@ -114,10 +116,10 @@ namespace iv {
             return SignalRef(*this, GRAPH_ID, _public_inputs.size() - 1);
         }
 
-        template<class Node>
-        NodeRef node(Node node)
+        template<class Node, class... Args>
+        NodeRef node(Args&&... args)
         {
-            _nodes.emplace_back(std::move(node));
+            _nodes.emplace_back(Node(std::forward<Args>(args)...));
             return NodeRef(*this, _nodes.size() - 1);
         }
 
@@ -139,7 +141,7 @@ namespace iv {
                 );
             }
 
-            return node(std::move(g).build());
+            return node<GraphNode>(std::move(g).build());
         }
 
         template<class... Refs>
@@ -149,7 +151,8 @@ namespace iv {
                 details::error("outputs(...) was already called on builder " + _parent_path);
             }
 
-            std::array<SignalRef, sizeof...(Refs)> refs_array{ SignalRef(std::forward<Refs>(refs))... };
+            std::array<SignalRef, sizeof...(Refs)> refs_array{ std::forward<Refs>(refs)... };
+            _public_outputs.clear();
             _public_outputs.reserve(refs_array.size());
 
             for (size_t i = 0; i < refs_array.size(); ++i) {
@@ -266,6 +269,9 @@ namespace iv {
 
     std::string SignalRef::to_string() const
     {
+        if (!graph_builder) {
+            return "empty signal";
+        }
         if (node_index == GRAPH_ID) {
             return "graph input " + std::to_string(output_port) + " in builder " + graph_builder->_parent_path;
         }
@@ -273,7 +279,7 @@ namespace iv {
     }
 
 
-    NodeRef::NodeRef(GraphBuilder& graph_builder, size_t index) noexcept :
+    NodeRef::NodeRef(GraphBuilder& graph_builder, size_t index) :
         _graph_builder(&graph_builder),
         _index(index)
     {
@@ -281,16 +287,25 @@ namespace iv {
 
     TypeErasedNode& NodeRef::node() const
     {
+        if (!_graph_builder) {
+            details::error("attempted to use a null NodeRef");
+        }
         return _graph_builder->_nodes[_index];
     }
 
     SignalRef NodeRef::operator[](size_t output_index) const
     {
+        if (!_graph_builder) {
+            details::error("attempted to use a null NodeRef");
+        }
         return SignalRef(*_graph_builder, _index, output_index);
     }
 
     SignalRef NodeRef::operator[](std::string_view output_name) const
     {
+        if (!_graph_builder) {
+            details::error("attempted to use a null NodeRef");
+        }
         auto outputs = get_outputs(node());
         for (size_t output_port = 0; output_port < outputs.size(); ++output_port) {
             if (outputs[output_port].name == output_name) {
@@ -306,6 +321,9 @@ namespace iv {
 
     NodeRef::operator SignalRef() const
     {
+        if (!_graph_builder) {
+            details::error("attempted to use a null NodeRef");
+        }
         if (get_num_outputs(node()) != 1) {
             details::error(
                 to_string() + " "
@@ -316,9 +334,12 @@ namespace iv {
     }
 
     template<class... Refs>
-    void NodeRef::operator()(Refs&&... refs) const
+    NodeRef NodeRef::operator()(Refs&&... refs) const
     {
-        std::array<SignalRef, sizeof...(Refs)> refs_array{ SignalRef(std::forward<Refs>(refs))... };
+        if (!_graph_builder) {
+            details::error("attempted to use a null NodeRef");
+        }
+        std::array<SignalRef, sizeof...(Refs)> refs_array{ std::forward<Refs>(refs)... };
 
         if (_graph_builder->_placed_nodes.contains(_index)) {
             details::error(
@@ -352,10 +373,14 @@ namespace iv {
         }
 
         _graph_builder->_placed_nodes.insert(_index);
+        return *this;
     }
 
-    void NodeRef::operator()(std::initializer_list<NamedRef> refs) const
+    NodeRef NodeRef::operator()(std::initializer_list<NamedRef> refs) const
     {
+        if (!_graph_builder) {
+            details::error("attempted to use a null NodeRef");
+        }
         if (_graph_builder->_placed_nodes.contains(_index)) {
             details::error(
                 to_string() + " "
@@ -367,6 +392,12 @@ namespace iv {
         std::vector<bool> placed_inputs(inputs.size(), false);
 
         for (auto const& ref : refs) {
+            if (ref.name.empty()) {
+                details::error(
+                    "named inputs must not use empty names on " + to_string()
+                );
+            }
+
             if (ref.signal.graph_builder != _graph_builder) {
                 details::error(
                     ref.signal.to_string() + " "
@@ -403,10 +434,14 @@ namespace iv {
         }
 
         _graph_builder->_placed_nodes.insert(_index);
+        return *this;
     }
 
     std::string NodeRef::to_string() const
     {
+        if (!_graph_builder) {
+            return "empty node";
+        }
         return "node at address " + _graph_builder->debug_node_id(_index);
     }
 }
