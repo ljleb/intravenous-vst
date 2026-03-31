@@ -1,2 +1,6 @@
-Builds/
+.vs/
+x64/
+86/
+arm64/
+packages/
 JuceLibraryCode/

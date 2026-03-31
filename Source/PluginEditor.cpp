@@ -1,40 +1,83 @@
-/*
-  ==============================================================================
-
-    This file contains the basic framework code for a JUCE plugin editor.
-
-  ==============================================================================
-*/
-
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
-IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor (IntravenousAudioProcessor& p)
-    : AudioProcessorEditor (&p), audioProcessor (p)
+IntravenousAudioProcessorEditor::IntravenousAudioProcessorEditor(IntravenousAudioProcessor& audio_processor, juce::AudioProcessorValueTreeState& value_tree_state):
+    AudioProcessorEditor(&audio_processor),
+    _audio_processor(audio_processor)
 {
-    // Make sure that before the constructor has finished, you've set the
-    // editor's size to whatever you need it to be.
-    setSize (400, 300);
+    for (auto const& parameter_identifier: {
+        IntravenousAudioProcessor::UNIFORM_NOISE_LEVEL_ID,
+        IntravenousAudioProcessor::TIME_WINDOW_ID,
+        IntravenousAudioProcessor::TIME_OFFSET_ID,
+        IntravenousAudioProcessor::GAUSSIAN_NOISE_RATIO_ID,
+        IntravenousAudioProcessor::HARMONICS_NOISE_RATIO_ID,
+        IntravenousAudioProcessor::NOISE_LOW_PASS_ID,
+        IntravenousAudioProcessor::NOISE_HIGH_PASS_ID,
+    }) {
+        _slider_packs.emplace_back(
+            std::make_unique<SliderPack>(
+                *this,
+                value_tree_state,
+                parameter_identifier,
+                static_cast<unsigned int>(_slider_packs.size())));
+    }
+
+    //for (auto const& parameter_identifier: {
+    //}) {
+    //    _button_packs.emplace_back(
+    //        std::make_unique<ButtonPack>(
+    //            *this,
+    //            value_tree_state,
+    //            parameter_identifier,
+    //            static_cast<unsigned int>(_button_packs.size())));
+    //}
+
+    setResizable(false, false);
+    setSize(static_cast<unsigned int>((_slider_packs.size() + 1) * 100), 140);
 }
 
-IntravenousAudioProcessorEditor::~IntravenousAudioProcessorEditor()
-{
+IntravenousAudioProcessorEditor::~IntravenousAudioProcessorEditor() {
 }
 
-//==============================================================================
-void IntravenousAudioProcessorEditor::paint (juce::Graphics& g)
+IntravenousAudioProcessorEditor::SliderPack::SliderPack(
+    IntravenousAudioProcessorEditor& editor,
+    juce::AudioProcessorValueTreeState& value_tree_state,
+    juce::StringRef const parameter_identifier,
+    unsigned int slider_position
+):
+    _slider(parameter_identifier),
+    _attachment(value_tree_state, parameter_identifier, _slider)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
+    _slider.setBounds(100 * (slider_position + 1), 25, 105, 105);
+    _slider.setTextBoxStyle(juce::Slider::TextEntryBoxPosition::TextBoxBelow, false, 64, 20);
+    _slider.setSliderStyle(juce::Slider::SliderStyle::RotaryHorizontalVerticalDrag);
+    editor.addAndMakeVisible(_slider);
 
-    g.setColour (juce::Colours::white);
-    g.setFont (15.0f);
-    g.drawFittedText ("Hello World!", getLocalBounds(), juce::Justification::centred, 1);
+    auto const& slider_parameter = value_tree_state.getParameter(_slider.getName());
+    _label.attachToComponent(&_slider, false);
+    _label.setJustificationType(juce::Justification::centred);
+    _label.setFont(juce::Font(16.f));
+    _label.setText(slider_parameter->getName(20), juce::NotificationType::dontSendNotification);
+    editor.addAndMakeVisible(_label);
 }
 
-void IntravenousAudioProcessorEditor::resized()
+IntravenousAudioProcessorEditor::ButtonPack::ButtonPack(
+    IntravenousAudioProcessorEditor& editor,
+    juce::AudioProcessorValueTreeState& value_tree_state,
+    juce::StringRef const parameter_identifier,
+    unsigned int button_position
+):
+    _attachment(value_tree_state, parameter_identifier, _button)
 {
-    // This is generally where you'll want to lay out the positions of any
-    // subcomponents in your editor..
+    auto const& parameter = value_tree_state.getParameter(parameter_identifier);
+    _button.setBounds(0, 25 * button_position, 105, 25);
+    _button.setButtonText(parameter->getName(20));
+    editor.addAndMakeVisible(_button);
+}
+
+void IntravenousAudioProcessorEditor::paint(juce::Graphics& graphics) {
+    graphics.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+}
+
+void IntravenousAudioProcessorEditor::resized() {
 }
